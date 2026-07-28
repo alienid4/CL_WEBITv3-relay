@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# 戰情室資產盤點 — 公司正式機「引導式」安裝
+# ---------------------------------------------------------------
+# 給不熟指令的同事用：一步一步問、自動檢查、全程寫 log。
+# 任何一步出錯就【停下來】，log 完整保留 —— 把 log 整份貼回給 AI 就能定位並修復。
+#
+#   用法：   sudo bash setup.sh
+#   出錯了： 照畫面最後印的 log 路徑，把那份檔整份貼回給 AI（或先看 tail -50 <log>）
+#   修好後： 直接再跑一次 sudo bash setup.sh（冪等，重跑不會弄壞已完成的部分）
+# ---------------------------------------------------------------
+# 不用 set -e：改成自己逐步判斷回傳碼，這樣 ERR trap 有機會把「錯在哪一步」寫進 log。
+set -uo pipefail
+
+# ===== log：每次一個新檔、帶時間戳、不覆蓋舊的（可回頭比對歷次安裝）=====
+LOG_DIR="${WEBIT_DATA:-/opt/webit3/data}/logs"
+mkdir -p "$LOG_DIR" 2>/dev/null || LOG_DIR="/tmp"   # data 目錄還沒建時先退到 /tmp
+LOG="$LOG_DIR/setup_$(date +%Y%m%d_%H%M%S).log"
+# 把畫面的所有輸出（含底層 deploy.sh 的）同時抄一份進 log
+exec > >(tee -a "$LOG") 2>&1
+
+STEP=0
+CURRENT="(初始化)"
+step() { STEP=$((STEP+1)); CURRENT="$1"; echo; echo "===== [步驟 $STEP] $CURRENT ====="; }
+
+# 任一未預期的指令失敗會跳來這裡：記錄是哪一步、退出碼、log 位置，然後停。
+on_error() {
+  local code=$?
+  echo
+  echo "════════════════════════════════════════════════════════════"
+  echo "!! 安裝中斷 —— 卡在【步驟 $STEP：$CURRENT】(退出碼 $code)"
+  echo "!!"
+  echo "!! 完整過程都在這份 log： $LOG"
+  echo "!! 修復：把上面這個檔【整份】貼回給 AI，會告訴你哪裡錯、怎麼修。"
+  echo "!!       想先自己看： tail -50 \"$LOG\""
+  echo "!! 修好後重跑： sudo bash setup.sh  （冪等，安全重跑）"
+  echo "════════════════════════════════════════════════════════════"
+  exit "$code"
+}
+trap on_error ERR
+
+echo "戰情室正式機 · 引導安裝"
+echo "開始時間： $(date '+%F %T')"
+echo "log 檔　： $LOG"
+
+# ===== 步驟 1：權限 =====
+step "檢查權限（需要 root）"
+if [ "$(id -u)" != "0" ]; then
+  echo "!! 請用 root 或 sudo 執行：  sudo bash setup.sh"
+  exit 1
+fi
+echo "  ✓ 以 root 執行"
+
+# ===== 步驟 2：前置環境 =====
+step "檢查前置環境（python3.11 / node20 / git）"
+MISS=0
+need() {  # need <指令> <版本指令> <補裝提示>
+  if command -v "$1" >/dev/null 2>&1; then
+    echo "  ✓ $1 － $($2 2>&1 | head -1)"
+  else
+    echo "  ✗ 缺 $1 － 安裝方式：$3"
+    MISS=1
+  fi
+}
+need python3.11 "python3.11 --version" "dnf install -y python3.11（或該發行版對應套件）"
+need node       "node --version"       "裝 Node 20：https://github.com/nodesource/distributions"
+need git        "git --version"        "dnf install -y git"
+if [ "$MISS" != "0" ]; then
+  echo "!! 有缺的套件，補齊後再跑一次（這一步不算失敗，是提醒你先裝東西）"
+  exit 1
+fi
+NODE_MAJOR="$(node --version 2>/dev/null | sed 's/^v//; s/\..*//')"
+if [ "${NODE_MAJOR:-0}" -lt 20 ]; then
+  echo "!! Node 版本要 >= 20，目前是 $(node --version)。請升級後再跑。"
+  exit 1
+fi
+echo "  ✓ 前置環境齊全"
+
+# ===== 步驟 3：問設定 =====
+step "設定這台 Server"
+DEF_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+read -rp "  這台 Server 對外服務的 IP [${DEF_IP:-請輸入}]： " SERVER_IP
+SERVER_IP="${SERVER_IP:-$DEF_IP}"
+if [ -z "$SERVER_IP" ]; then
+  echo "!! 沒給 IP，無法繼續（別台機器要用這個位址連進來）"
+  exit 1
+fi
+read -rp "  跑服務的系統帳號 [sysctl]： " SVC
+SVC="${SVC:-sysctl}"
+echo
+echo "  將會這樣設定："
+echo "    前端網址： http://$SERVER_IP:3000   ← 同事用瀏覽器開這個"
+echo "    後端 API： http://$SERVER_IP:8000"
+echo "    服務帳號： $SVC"
+read -rp "  以上正確就按 Enter 繼續（要取消按 Ctrl-C）： " _
+# ⚠️ 提醒：IP 一定要填「別台連得到」的位址，不能填 localhost / 127.0.0.1，否則別人連不到。
+
+# ===== 步驟 4：服務帳號 =====
+step "確保服務帳號 $SVC 存在"
+if id "$SVC" >/dev/null 2>&1; then
+  echo "  ✓ 帳號 $SVC 已存在"
+else
+  useradd -r -m "$SVC"
+  echo "  ✓ 已建立帳號 $SVC"
+fi
+
+# ===== 步驟 5：實際部署（交給 deploy.sh，帶入上面的設定）=====
+step "部署：venv / 依賴 / 建 DB / 前端 build / systemd / 防火牆"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+if [ ! -f "$HERE/deploy.sh" ]; then
+  echo "!! 找不到 $HERE/deploy.sh —— 請確認是在 clone 下來的資料夾裡執行"
+  exit 1
+fi
+export API_HOST="$SERVER_IP" SVC_USER="$SVC"
+export GIT_COMMIT="$(git -C "$HERE" rev-parse --short HEAD 2>/dev/null || echo n/a)"
+echo "  → 呼叫 deploy.sh（它的輸出也會一起寫進上面那份 log）"
+bash "$HERE/deploy.sh"
+
+# ===== 步驟 6：建管理員 =====
+step "建立管理員帳號（等一下會要你輸入密碼）"
+DATA="${WEBIT_DATA:-/opt/webit3/data}"
+VENV="${WEBIT_VENV:-/opt/webit3/venv}"
+APP="${WEBIT_APP:-/opt/webit3/app}"
+echo "  請設定 admin 的登入密碼："
+sudo -u "$SVC" ASSET_DB_PATH="$DATA/asset.db" "$VENV/bin/python" "$APP/backend/seed_admin.py" admin
+
+# ===== 完成 =====
+echo
+echo "════════════════════════════════════════════════════════════"
+echo "✅ 安裝完成！ $(date '+%F %T')"
+echo
+echo "   打開瀏覽器：  http://$SERVER_IP:3000"
+echo "   用剛剛設定的 admin 帳密登入。"
+echo
+echo "   這次的完整 log： $LOG"
+echo "   想先放 demo 假資料看畫面（正式上線前記得清）："
+echo "     sudo -u $SVC ASSET_DB_PATH=$DATA/asset.db $VENV/bin/python $APP/backend/seed_demo.py"
+echo
+echo "   若公司另有防火牆／資安設備，請再放行這台的 3000、8000 兩個埠。"
+echo "════════════════════════════════════════════════════════════"

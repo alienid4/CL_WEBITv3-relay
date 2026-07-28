@@ -1,0 +1,7 @@
+#!/bin/sh
+# 一次性開發包 — git pre-commit hook：commit 前強制過關卡。
+# 安裝：install.py 會自動複製到 .git/hooks/pre-commit；手動則：
+#   cp .project/pre-commit .git/hooks/pre-commit   （Windows 的 git 也吃 sh hook）
+# 任一項 FAIL -> exit 1 -> commit 被擋。
+if command -v python >/dev/null 2>&1; then PY=python; else PY=python3; fi
+exec "$PY" .project/checks.py

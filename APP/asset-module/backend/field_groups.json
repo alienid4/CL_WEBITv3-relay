@@ -1,0 +1,37 @@
+{
+  "_comment": "資產查詢頁常用/進階欄位分層（D14精神：畫面呈現優先序設定檔化，不寫死在前端程式碼）。依 MVP契約「欄位分層」章節定案清單。未列出的欄位一律視為進階（保守預設，優先精簡首屏）。",
+  "hardware": {
+    "common": [
+      "hostname",
+      "ip",
+      "device_model",
+      "rack_no",
+      "group_name",
+      "api_id",
+      "asset_purpose",
+      "custodian",
+      "usage_unit",
+      "asset_status",
+      "environment"
+    ],
+    "advanced": [
+      "confidentiality",
+      "availability",
+      "integrity",
+      "request_no",
+      "inventory_division",
+      "inventory_department",
+      "owner",
+      "remark",
+      "hardware_no",
+      "big_ip_vip",
+      "asset_name",
+      "infra_type",
+      "physical_location",
+      "quantity",
+      "os",
+      "user_name",
+      "owning_company"
+    ]
+  }
+}

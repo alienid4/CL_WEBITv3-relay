@@ -1,0 +1,27 @@
+{
+  "_comment": "CMDB Gateway 欄位 → 我們的 hardware 欄位對應。目前『猜測值』——CMDB 實際讀的欄位名還抓不到（家裡連不到公司網 10.93.x）。等在能連公司網的機器打 /api/cmdb/pull?group=hardware 看到真實欄位、或使用者貼回應，改這份設定檔即可鎖定，不用改程式。已知的只有寫入範例欄位：SN/Name/Category/Quantity。",
+  "hardware": {
+    "SN": "asset_serial",
+    "Name": "asset_name",
+    "Category": "infra_type",
+    "Quantity": "quantity",
+    "IP": "ip",
+    "Hostname": "hostname",
+    "OS": "os",
+    "Model": "device_model",
+    "MAC": "mac",
+    "SerialNumber": "hw_serial",
+    "Environment": "environment",
+    "Custodian": "custodian",
+    "User": "user_name",
+    "Department": "usage_unit",
+    "Company": "owning_company",
+    "Status": "asset_status"
+  },
+  "person": {
+    "Name": "person_name",
+    "Department": "belong_department",
+    "Phone": "phone",
+    "Email": "email"
+  }
+}

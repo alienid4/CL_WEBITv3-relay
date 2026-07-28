@@ -1,0 +1,225 @@
+{
+  "_comment": "技術決策紀錄。給接手的人（含 AI）看「為什麼這樣做」，避免後人把修正當成隨意寫法而改回去。contradicts 會被 checks.py 拿去掃文件，只放真的不該再出現的字眼。",
+  "decisions": [
+    {
+      "id": "T1",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "SQLite 連線要不要開 check_same_thread=False？",
+      "choice": "要開",
+      "why": "FastAPI 把 sync 的 get_db 依賴與 sync 路由都丟進 anyio threadpool，但不保證落在同一條 worker。單一請求時通常剛好同一條所以看不出問題；資產查詢頁一次並行打 5 支 API，執行緒被打散就炸 SQLite objects created in a thread can only be used in that same thread，前端顯示成「資產資料載入失敗」。這個故障先前被誤判為「暫時性快取問題、硬重整就好」，實際是真 bug。關掉檢查是安全的：每個請求各自建立/使用/關閉自己的連線，不會被兩條執行緒同時使用。",
+      "constraint": "不可以把連線改成跨請求共用的全域單例——那才會真的資料競爭。",
+      "evidence": "tests/asset_module/test_concurrent_requests.py（只有 db 層那支真的守得住，TestClient 重現不了 worker 交手）",
+      "contradicts": []
+    },
+    {
+      "id": "T2",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "主庫要不要啟用 WAL？",
+      "choice": "啟用 WAL + busy_timeout=5000",
+      "why": "讀不會被寫擋住（儀表板並行打多支 API，預設 rollback journal 下讀寫互卡會出現 database is locked），也是備份用 VACUUM INTO 能安全併發的前提。",
+      "evidence": "tests/asset_module/test_backup_health.py::test_主庫啟用了_WAL",
+      "contradicts": []
+    },
+    {
+      "id": "T3",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "備份要用檔案複製還是資料庫層快照？",
+      "choice": "VACUUM INTO + 完成後跑 PRAGMA integrity_check",
+      "why": "原本用 shutil.copy2 直接複製活動中的 .db。SQLite 資料庫是活的，複製當下若有寫入交易進行中，產出的檔案可能破損或缺資料，而且當下不會有任何錯誤——要等到真的拿去還原才發現。備份的價值就在還原那一刻，「以為有備份其實還原不了」是最糟的失敗模式。沒驗過的備份不算備份。",
+      "evidence": "tests/asset_module/test_backup_health.py（含背景執行緒持續寫入時做快照仍 PASS）",
+      "contradicts": []
+    },
+    {
+      "id": "T4",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "API 端點的預設權限？",
+      "choice": "除 login／logout／version 外，全部需登入",
+      "why": "原本 16 個端點沒掛 require_auth。前端每頁都有登入守衛，看起來安全，但 API 本身全裸——任何碰得到後端埠的人 curl 就能撈走全部資產與人員姓名電話，甚至 PUT 改欄位對應。根因是 S6 當初只保護 /api/auth/me，其餘「不在該切片範圍」留待後續，之後就沒人補。",
+      "constraint": "新增路由預設掛 require_auth；真要公開必須明確加進 test_auth_coverage.PUBLIC 白名單（強迫做一次決定）。",
+      "evidence": "tests/asset_module/test_auth_coverage.py（走 FastAPI 路由表自動涵蓋新端點）",
+      "contradicts": []
+    },
+    {
+      "id": "T5",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "/api/topology 原設計為「讀免登入」，要維持嗎？",
+      "choice": "改為需登入",
+      "why": "這張圖含系統依賴與 SPOF 標記，等於直接告訴人「打哪一台全部會倒」，是最不該公開的資料；頁面本來就在登入牆後，公開讀沒有帶來任何好處。健康檢查改用 /api/version（deploy.sh 用的就是它）。",
+      "note": "這推翻了交接摘要_2026-07-18 記載的原設計。使用者 07-18 已知悉並未否決。",
+      "contradicts": []
+    },
+    {
+      "id": "T6",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "時間欄位存 UTC 還是本地時間？",
+      "choice": "一律本地時間，且由 Python 明確寫入，不倚賴資料表 DEFAULT",
+      "why": "原本 schema 用 SQLite datetime now（UTC），scan_runs 卻用 Python datetime.now（本地），同一次掃描在兩張表差 8 小時，畫面顯示的掃描時間是錯的。改 schema 之後還發現：CREATE TABLE IF NOT EXISTS 不會修改既有資料表的欄位預設值，所以正式環境的新資料仍會用舊的 UTC 預設——改了 schema 卻只對全新資料庫生效，是最容易漏掉的那種。",
+      "constraint": "sessions 表刻意不動：expires_at 由 auth.py 用 UTC 寫、也用 UTC 比對，自成一套是正確的；動它會讓所有人登入立刻失效。",
+      "evidence": "tests/asset_module/test_semantic_bugs.py（含遷移冪等性與「假 DEFAULT 值永不出現」）",
+      "contradicts": []
+    },
+    {
+      "id": "T7",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "比對引擎判斷「同一台主機」的鑰匙？",
+      "choice": "以 IP 為主鍵、主機名稱為輔（符合契約 D3），且空字串要排除",
+      "why": "去重原本只比對 hostname。網段掃描抓不到反解名稱時 hostname 是空字串（不是 NULL），於是所有「叫不出名字」的主機在 hostname = 空字串 這個條件下全部長得一樣，第二台之後被當成「已經記過了」跳過。實測 3 台未登記主機因此從未進過問題清單，畫面只顯示 1 筆。",
+      "evidence": "tests/asset_module/test_semantic_bugs.py::test_多台無主機名的未登記主機各自產生漏登記",
+      "contradicts": []
+    },
+    {
+      "id": "T8",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "儀表板磚塊的數字與點進去的清單筆數不一致，以哪邊為準？",
+      "choice": "兩邊用同一段判定邏輯；「掃到卻沒登記」對全部資產比對，不受環境篩選影響",
+      "why": "磚塊拿環境篩選後的子集去比，登記在「測試」環境的機器被算成未登記，磚塊顯示 4；但 /adopt 不分環境只有 3。「掃到卻沒登記」的語意是「整個資產清單都沒有它」，登記在別的環境仍然是有登記。數字對不上的下鑽比不能點更糟，使用者會連整個畫面都不信。",
+      "evidence": "tests/asset_module/test_dashboard_drilldown.py、test_semantic_bugs.py",
+      "contradicts": []
+    },
+    {
+      "id": "W1",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "開發要在本機（Windows）還是直接在 221？",
+      "choice": "在 221 就地開發：完整 repo clone 到 /opt/webit3/src，systemd 直接指向它",
+      "why": "本機環境與 221 差異造成的問題耗掉大量時間（localhost 解到 IPv6、.nuxt 產物壞、CORS 只放行 localhost、要另建 demo DB），全都與產品無關。SQLite 跨執行緒那個 bug，221 的 journalctl 早就有完整 exception，本機卻要重現半天。另外舊流程是 tar 覆蓋 /opt/webit3/app，在伺服器上手改會被無聲抹掉。",
+      "constraint": "git 操作一定要用 sudo -u sysctl，以 root 提交會讓 git 物件變 root 擁有、服務讀不到。前端 build 後才能 chown，順序反了 .output 變 root 擁有、服務起不來（錯誤訊息是誤導性的 Cannot find module）。",
+      "contradicts": []
+    },
+    {
+      "id": "W2",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "程式碼要怎麼送到只能用 public GitHub 的公司 Notebook？",
+      "choice": "單向匯出去識別化快照（.project/make_relay.py），不是主 repo 的鏡像",
+      "why": "主 repo 含內網拓撲與完整歷史，不能直接轉公開——就算現在改乾淨，git log -p 還是挖得回舊版本。relay 每次重新產生、單一 commit、無歷史可挖。",
+      "constraint": "三道關卡缺一不可：替換表 -> 殘留掃描 -> 在產出物上跑 pytest。第三道是後來補的：替換表改到測試裡的固定值，導致主 repo 全綠、送出去那份卻是紅的。relay 工具本身必須排除（EXCLUDE），它的替換表裡直接寫著真實 IP。",
+      "contradicts": []
+    },
+    {
+      "id": "W3",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "GitHub 憑證要不要放在 221？",
+      "choice": "目前不放；由 Windows 端執行 relay 推送",
+      "why": "221 同時對內網提供網頁服務，多一個 token 就是多一個風險面。",
+      "note": "使用者已提出用 repo-scoped deploy key 讓 221 自己推（少一步），尚未拍板。見待決事項。",
+      "contradicts": []
+    },
+    {
+      "id": "P1",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "測試綠燈代表功能正確嗎？",
+      "choice": "不代表。新測試必須逐一還原修正、確認會變紅，才算數",
+      "why": "使用者肉眼掃過畫面就抓到 4 個 bug，而當時 112 項測試全綠。原因不是測試太少，是測試驗的是「程式有沒有照我的假設跑」——假設錯了測試就跟著錯，而且永遠是綠的（自我循環）。此後每支新測試都做還原驗證。",
+      "note": "既有 100+ 項測試裡還有多少是自我循環的，尚未查——併入待辦的語意稽核。",
+      "contradicts": []
+    },
+    {
+      "id": "P2",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "版號可以拿來確認換版成功嗎？",
+      "choice": "不可以。要看 /api/version 的 started_at（行程啟動時間）",
+      "why": "deploy.sh 原本用 systemctl enable --now，對已在跑的服務不做任何事，新程式碼根本沒載入；但 version.json 是每次請求即時讀檔，版號照樣跳成新版，看起來部署成功。實際跑的還是舊碼（新端點 404、未登入仍可讀資料）。已修 deploy.sh 改用 restart，並讓 /api/version 直接問 git 並回報 started_at。",
+      "contradicts": []
+    },
+    {
+      "id": "Q1",
+      "date": "2026-07-20",
+      "status": "confirmed",
+      "question": "git push 權限要不要放行給 AI",
+      "choice": "放行",
+      "why": "不放行的話每次 relay／push 都要使用者手動執行。",
+      "constraint": "AI 不能改自己的權限檔（實測 2026-07-20：編輯 settings.local.json 加 git push 被 auto-mode classifier 擋下——這是防自我提權，擋得對）。需使用者手動在 .claude/settings.local.json 的 allow 加 \"Bash(git push:*)\" 後重開 Claude Code。此步驟未完成前，push 仍會逐次要確認。",
+      "contradicts": []
+    },
+    {
+      "id": "Q2",
+      "date": "2026-07-18",
+      "status": "pending",
+      "question": "GitHub relay repo 何時轉 public",
+      "owner": "使用者",
+      "effort": "5 分",
+      "difficulty": "簡單",
+      "user_action": "在 GitHub 上改可見性（帳號設定，我不碰）",
+      "ai_action": "轉之前再跑一次 make_relay.py 確認內容仍乾淨",
+      "why_matters": "公司 Notebook 只能存取 public repo；內容已去識別化並通過殘留掃描＋產出物測試，轉的時候不用再洗"
+    },
+    {
+      "id": "Q3",
+      "date": "2026-07-20",
+      "status": "confirmed",
+      "question": "異地備份要放哪裡",
+      "choice": "放 222（另一台常開 Linux 伺服器）的 /ai_backup",
+      "why": "221 三顆 NVMe 同屬一個 LVM，機器內設任何路徑都是假異地。222 是另一台實體機、221 本來就連得到，比推到個人 Windows(會關機) 穩。異地路徑已改成畫面可設(app_settings)，異地複製機制本就現成(run_backup 會複製到 offsite_dir)。",
+      "constraint": "最後一步(在 221 掛載 222:/ai_backup、畫面設路徑、立即備份把燈點綠)是 221 上的一次性 infra 動作，見 AI/SOP_異地備份_掛載222.md，待使用者執行。",
+      "evidence": "tests/asset_module/test_backup_health.py（異地路徑 app 設定優先/退回env/空清除/設了不再報未設定）",
+      "contradicts": []
+    },
+    {
+      "id": "V1",
+      "date": "2026-07-20",
+      "status": "confirmed",
+      "question": "vCenter 自動盤點要直連 API 還是走檔案中繼？",
+      "choice": "檔案中繼（方案 B）：一台常開 Windows 排程跑 RVTools 匯出到資料夾，系統自動抓最新檔",
+      "why": "直連要我們存 vCenter 帳號、能連到它、還要自己追它每次改版的 API 變化——最會變的擔子全揹在我們身上，斷了還可能悄悄斷。走中繼檔後追 VMware 改版的責任在 RVTools 身上，我們只依賴很穩的 Excel 格式；且沿用現成的 rvtools_import，幾乎不用再寫。",
+      "constraint": "vCenter 自己不會排程匯出——要一台常開 Windows 用工作排程器跑 RVTools CLI。鮮度燈示警「今晚沒收到」。見 AI/SOP_vCenter每晚自動匯入.md。日後要更即時再評估直連 API（同一套身分解析可沿用）。",
+      "evidence": "tests/asset_module/test_vcenter_autoimport.py、test_rvtools_import.py",
+      "contradicts": []
+    },
+    {
+      "id": "Q4",
+      "date": "2026-07-20",
+      "status": "confirmed",
+      "question": "Git 流程要不要改成 221 用 deploy key 自己推 GitHub",
+      "choice": "要，用 repo-scoped deploy key 讓 221 自己推",
+      "why": "現在 Windows 當中間人是繞路。deploy key 只綁這一個 repo（不是整個帳號），風險面比放 token 小很多，是合理取捨。",
+      "constraint": "這會在對內網提供網頁服務的 221 上放一把可寫入的金鑰——是 W3 當初特意避開的，但 repo-scoped 已把風險縮到最小。待使用者：在 221 產金鑰、公鑰掛到 GitHub repo Deploy keys（勾寫入）；之後 AI 把 relay 腳本搬到 221 測通（需 221 存取，尚未做）。",
+      "contradicts": []
+    },
+    {
+      "id": "Q5",
+      "date": "2026-07-20",
+      "status": "confirmed",
+      "question": "facts 收集要不要在目標主機佈 SSH key",
+      "choice": "要，佈 key 收 facts",
+      "why": "不佈只能靠 MAC／開放埠／TTL 猜；佈了能直接拿到真主機名、OS、序號、機型——這是「掃到不認識的機器時能給多少辨識線索」的關鍵。",
+      "constraint": "此決定其實已在 S19 一鍵納管/排程自動納管落地：Linux 走 onboard_engine 佈 webit3scan 收集公鑰、Windows 走 WinRM 不佈 key；已在 .222/.223/.230 實測收到真序號。要新增很多台就用排程自動納管（授權網段）。剩：FACTS 大量佈署的 curl 一行版仍待做（見記憶 project_facts_ssh_bootstrap）。",
+      "contradicts": []
+    },
+    {
+      "id": "T9",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "10.30.13.31 這類不存在的假 IP 要留著嗎",
+      "choice": "刪除。資產只保留真實 IP",
+      "why": "使用者要測真實情況：真的有那台機器，其餘欄位才是假資料。不存在的 IP 會讓「登記卻掃不到」永遠亮紅燈，掩蓋真正的問題。10.20.* 與 10.30.* 已於 07-18 清除（刪除前備份）。",
+      "contradicts": []
+    },
+    {
+      "id": "M-VM",
+      "date": "2026-07-21",
+      "status": "confirmed",
+      "question": "戰情室要不要保留獨立的 vmware（VM）模組？",
+      "choice": "拿掉。不做獨立 vmware 模組，總模組數 10 → 9",
+      "why": "採集端已由 M1 的 RVTools 匯入（rvtools_import.py 吃 vInfo）涵蓋——VM 進來就是資產，資產盤點頁本來就看得到。舊系統的 vmware 模組只是「主管開門版 vCenter 唯讀總覽」，再開一個模組是重複呈現同一份資料。",
+      "constraint": "刻意放棄的是「聚合視角」：叢集容量、host:VM 密度、datastore 用量這類逐台看不出來的統計，拿掉後就沒有。若日後真有人要求，作法是擴充 RVTools 匯入分頁（vHost/vCluster/vDatastore）並在資產盤點內加一個檢視，而不是復活獨立模組。另：舊系統「沒資料就顯示假資料」的行為不得沿用，沒資料就明說沒資料。",
+      "contradicts": []
+    }
+  ],
+  "doc_scan_ignore": [
+    "AI/交接摘要",
+    ".project/decisions.json",
+    "AI/工作模式"
+  ]
+}

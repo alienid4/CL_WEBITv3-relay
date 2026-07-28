@@ -1,0 +1,88 @@
+/* 資訊戰情室 command-center 暗色主題。沿用原本 CSS 變數名（--brand/--card/--mint…）改成暗色值，
+   再用全域規則把 .card/table/input/按鈕統一成暗色玻璃風，所以每一頁都連貫變暗、不會半殘。
+   字體：數字/標題用 Space Grotesk（vendored 本地）、中文用系統字。 */
+@import './fonts.css';
+
+:root, :root[data-theme='light'], :root[data-theme='dark'] {
+  --paper: #081210;               /* 戰情室深底 */
+  --card: rgba(255,255,255,.04);  /* 玻璃卡 */
+  --card-solid: #101c19;
+  --sidebar: #081512;
+  --sidebar-active-bg: rgba(47,214,172,.14);
+  --sidebar-active-text: #4fe3c0;
+  --sidebar-text: #a9c3ba;
+  --topbar: rgba(10,21,18,.6);
+  --mint: rgba(47,214,172,.10);
+  --mint-deep: rgba(47,214,172,.16);
+  --ink: #e4efe9;
+  --ink-soft: #b6ccc3;
+  --muted: #7f988e;
+  --border: rgba(255,255,255,.08);
+  --border-strong: rgba(255,255,255,.14);
+  --brand: #2fd6ac;  --brand-dark: #1e8a6f;
+  --link: #7fb3ea;
+  --good: #2fd6ac;  --good-soft: rgba(47,214,172,.14);
+  --warn: #ffb867;  --warn-soft: rgba(255,184,103,.14);
+  --bad: #ff6b6b;   --bad-soft: rgba(255,107,107,.14);
+  --radius: 16px;
+  --disp: 'Space Grotesk', 'Microsoft JhengHei', sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body, #__nuxt { height: 100%; }
+body {
+  margin: 0; color: var(--ink);
+  font-family: 'Microsoft JhengHei', 'PingFang TC', 'Noto Sans TC', sans-serif;
+  line-height: 1.6; -webkit-font-smoothing: antialiased;
+  background:
+    radial-gradient(1000px 560px at 12% -8%, rgba(47,214,172,.14), transparent 60%),
+    radial-gradient(760px 440px at 100% 0%, rgba(21,101,192,.10), transparent 55%),
+    linear-gradient(180deg, #0a1512, #081210 55%, #060f0d) fixed;
+}
+body::before {          /* 戰術網格 */
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0; opacity: .5;
+  background-image: linear-gradient(rgba(255,255,255,.022) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(255,255,255,.022) 1px, transparent 1px);
+  background-size: 46px 46px;
+}
+#__nuxt { position: relative; z-index: 1; }
+.mono, .num { font-family: var(--disp); }
+
+/* ===== 全域暗色玻璃化：讓每頁 scoped 的 .card/table/input 都連貫暗色 ===== */
+.card {
+  background: var(--card) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,.25), 0 12px 30px rgba(0,0,0,.18) !important;
+  backdrop-filter: blur(10px);
+}
+.card-title { color: var(--muted) !important; letter-spacing: .5px; }
+
+table { border-radius: 12px; overflow: hidden; }
+th { background: rgba(255,255,255,.04) !important; color: var(--muted) !important; border-color: var(--border) !important; }
+td { border-color: var(--border) !important; }
+tbody tr:hover td, tr:hover td { background: rgba(47,214,172,.05) !important; }
+
+input, select, textarea {
+  background: rgba(255,255,255,.04) !important;
+  border: 1px solid var(--border-strong) !important;
+  color: var(--ink) !important;
+  border-radius: 8px !important;
+  transition: border-color .15s, box-shadow .15s;
+}
+input::placeholder, textarea::placeholder { color: #6f877e; }
+input:focus, select:focus, textarea:focus {
+  outline: none; border-color: var(--brand) !important;
+  box-shadow: 0 0 0 3px rgba(47,214,172,.18) !important;
+}
+select option { background: #101c19; color: var(--ink); }
+
+button, .btn { border-radius: 9px; transition: background .15s, box-shadow .15s, transform .05s; }
+button:active, .btn:active { transform: translateY(.5px); }
+
+a { color: var(--link); }
+::selection { background: rgba(47,214,172,.22); }
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.2); }
+::-webkit-scrollbar-track { background: transparent; }
