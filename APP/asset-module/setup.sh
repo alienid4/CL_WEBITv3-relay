@@ -122,7 +122,13 @@ cp    "$HERE/deploy.sh" "$APP_DIR/"
 echo "  ✓ backend / frontend / deploy.sh 已就位"
 
 # 離線包（主機不能上網時使用）：有就帶過去，deploy.sh 會自動偵測並改走離線路徑。
-if [ -d "$HERE/wheels" ]; then
+# wheels 用 tar.gz 收著：某些 wheel 檔名很長（manylinux 那串），
+# 經 Windows 中轉時會超過 MAX_PATH 260 字元而整個檔案遺失，壓起來就沒這問題。
+if [ -f "$HERE/wheels.tar.gz" ]; then
+  mkdir -p "$APP_DIR/wheels"
+  tar xzf "$HERE/wheels.tar.gz" -C "$APP_DIR/wheels"
+  echo "  ✓ 偵測到 wheels.tar.gz（$(ls "$APP_DIR/wheels" | wc -l) 個）→ 稍後 pip 離線安裝，不連 PyPI"
+elif [ -d "$HERE/wheels" ]; then
   cp -r "$HERE/wheels" "$APP_DIR/"
   echo "  ✓ 偵測到 wheels/（$(ls "$HERE/wheels" | wc -l) 個）→ 稍後 pip 離線安裝，不連 PyPI"
 fi
