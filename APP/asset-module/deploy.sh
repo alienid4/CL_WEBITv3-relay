@@ -23,16 +23,34 @@ echo "===== [2/7] 後端 venv + 相依 ====="
 if [ ! -x "$VENV/bin/python" ]; then
   python3.11 -m venv "$VENV"
 fi
-"$VENV/bin/python" -m pip install --upgrade pip >/dev/null
-"$VENV/bin/python" -m pip install -r "$APP/backend/requirements.txt"
+# 離線包情境：$APP/wheels 存在就代表這是離線包，改從本地 wheel 裝、完全不連 PyPI。
+# 為什麼要這樣：公司主機常常整台不能上網（2026-07-28 公司 198-014 就是），
+# 一連 PyPI 就卡在這一步，而且是「部署到一半」才爆，比事前準備難處理得多。
+if [ -d "$APP/wheels" ]; then
+  echo "  偵測到 wheels/ → 離線安裝（不連 PyPI）"
+  "$VENV/bin/python" -m pip install --no-index --find-links="$APP/wheels" -r "$APP/backend/requirements.txt"
+else
+  "$VENV/bin/python" -m pip install --upgrade pip >/dev/null
+  "$VENV/bin/python" -m pip install -r "$APP/backend/requirements.txt"
+fi
 
 echo "===== [3/7] 初始化 DB（冪等，schema 用 CREATE IF NOT EXISTS）====="
 ASSET_DB_PATH="$DATA/asset.db" "$VENV/bin/python" "$APP/backend/db.py"
 
 echo "===== [4/7] 前端 build（Node20）====="
 cd "$APP/frontend"
-npm install --no-audit --no-fund
-NUXT_PUBLIC_API_BASE="$API_BASE" npm run build
+# 離線包情境：帶了預先 build 好的 .output 但沒有 node_modules —— 直接沿用，不 build。
+# 敢這樣做的兩個理由：
+#   1. Nuxt3 的 .output 是自包含的，執行只需要 node，不需要 node_modules。
+#   2. apiBase 走 runtimeConfig.public，執行時由 NUXT_PUBLIC_API_BASE 覆蓋（見下面的
+#      systemd unit），所以「換一台機器、換一個 IP」不需要重新 build。
+# 221 就地開發時 node_modules 與 .output 都在，會走 else 正常 build，行為不變。
+if [ -d .output ] && [ ! -d node_modules ]; then
+  echo "  偵測到預先 build 的 .output 且無 node_modules → 沿用（離線模式，不 build）"
+else
+  npm install --no-audit --no-fund
+  NUXT_PUBLIC_API_BASE="$API_BASE" npm run build
+fi
 
 echo "===== [4.5/7] stamp 版本建置資訊（/api/version 用，讓畫面看得出換版成功）====="
 # git_commit 由 build 機器帶進來（.221 無 git repo）：部署前 export GIT_COMMIT=$(git rev-parse --short HEAD)

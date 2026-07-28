@@ -103,17 +103,40 @@ else
   echo "  ✓ 已建立帳號 $SVC"
 fi
 
-# ===== 步驟 5：實際部署（交給 deploy.sh，帶入上面的設定）=====
-step "部署：venv / 依賴 / 建 DB / 前端 build / systemd / 防火牆"
+# ===== 步驟 5：把程式碼搬到部署位置 =====
+# 為什麼需要這一步：deploy.sh 讀的是 $WEBIT_APP（預設 /opt/webit3/app），
+# 但你是在解壓/clone 出來的資料夾（例如 /tmp/asset-module）執行這支。
+# 少了這一步，deploy.sh 會找不到 backend/requirements.txt 直接失敗。
+# 另外程式碼放 /tmp 會被系統清掉，本來就該搬到常駐位置。
 HERE="$(cd "$(dirname "$0")" && pwd)"
+APP_DIR="${WEBIT_APP:-/opt/webit3/app}"
+step "安裝程式碼到 $APP_DIR"
 if [ ! -f "$HERE/deploy.sh" ]; then
-  echo "!! 找不到 $HERE/deploy.sh —— 請確認是在 clone 下來的資料夾裡執行"
+  echo "!! 找不到 $HERE/deploy.sh —— 請確認是在解開的資料夾裡執行"
   exit 1
 fi
+mkdir -p "$APP_DIR"
+cp -r "$HERE/backend"  "$APP_DIR/"
+cp -r "$HERE/frontend" "$APP_DIR/"
+cp    "$HERE/deploy.sh" "$APP_DIR/"
+echo "  ✓ backend / frontend / deploy.sh 已就位"
+
+# 離線包（主機不能上網時使用）：有就帶過去，deploy.sh 會自動偵測並改走離線路徑。
+if [ -d "$HERE/wheels" ]; then
+  cp -r "$HERE/wheels" "$APP_DIR/"
+  echo "  ✓ 偵測到 wheels/（$(ls "$HERE/wheels" | wc -l) 個）→ 稍後 pip 離線安裝，不連 PyPI"
+fi
+if [ -f "$HERE/frontend-output.tar.gz" ]; then
+  tar xzf "$HERE/frontend-output.tar.gz" -C "$APP_DIR/frontend/"
+  echo "  ✓ 偵測到預先 build 的前端 → 已解開，稍後不需 npm install/build"
+fi
+
+# ===== 步驟 6：實際部署（交給 deploy.sh，帶入上面的設定）=====
+step "部署：venv / 依賴 / 建 DB / 前端 / systemd / 防火牆"
 export API_HOST="$SERVER_IP" SVC_USER="$SVC"
 export GIT_COMMIT="$(git -C "$HERE" rev-parse --short HEAD 2>/dev/null || echo n/a)"
 echo "  → 呼叫 deploy.sh（它的輸出也會一起寫進上面那份 log）"
-bash "$HERE/deploy.sh"
+bash "$APP_DIR/deploy.sh"
 
 # ===== 步驟 6：建管理員 =====
 step "建立管理員帳號（等一下會要你輸入密碼）"
