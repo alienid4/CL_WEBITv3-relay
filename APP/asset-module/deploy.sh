@@ -183,7 +183,20 @@ systemctl enable --now webit3-cleanup.timer
 echo "===== [7.5/7] 換版驗證（版號會騙人，這裡驗「跑的是不是新碼」）====="
 sleep 4
 for svc in webit3-api webit3-web; do
-  systemctl is-active --quiet "$svc" || { echo "!! $svc 沒起來"; systemctl status "$svc" --no-pager -l | tail -20; exit 1; }
+  if ! systemctl is-active --quiet "$svc"; then
+    echo "!! $svc 沒起來"
+    systemctl status "$svc" --no-pager -l | tail -20
+    # systemctl status 只給退出碼，真正的錯誤（Python traceback、Permission denied、
+    # Address already in use）都在 journal 裡。不印出來的話，log 貼回來也查不出原因。
+    echo "--- journalctl（真正的錯誤通常在這裡） ---"
+    journalctl -u "$svc" -n 40 --no-pager 2>/dev/null | tail -30 || echo "（取不到 journal）"
+    echo "--- 以服務帳號實際載入一次，看是不是 import 失敗 ---"
+    sudo -u "${SVC_USER}" ASSET_DB_PATH="${DATA}/asset.db" \
+      "$VENV/bin/python" -c "import sys; sys.path.insert(0,'${APP}/backend'); import api" 2>&1 | tail -15 || true
+    echo "--- SELinux 模式（enforcing 時常是元凶） ---"
+    getenforce 2>/dev/null || echo "（無 SELinux）"
+    exit 1
+  fi
   echo "$svc: active（啟動於 $(systemctl show "$svc" -p ActiveEnterTimestamp --value)）"
 done
 

@@ -68,6 +68,11 @@ if command -v python3.11 >/dev/null 2>&1; then
 elif [ -f "$HERE/python311-standalone.tar.gz" ]; then
   mkdir -p "$RUNTIME/python311"
   tar xzf "$HERE/python311-standalone.tar.gz" -C "$RUNTIME/python311" --strip-components=1
+  # 解開來是 drwxr-x--- root:root，服務帳號（非 root）會連目錄都進不去，
+  # venv/bin/python 只是指向這裡的 symlink，於是 systemd 啟動時直接 exit。
+  # deploy.sh 後面雖然會 chown 整個 /opt/webit3，但 RUNTIME 可能被指到別處，
+  # 這裡先放行讀取與進入，不依賴後面那次 chown。
+  chmod -R a+rX "$RUNTIME/python311"
   PYTHON311="$RUNTIME/python311/bin/python3"
   if [ -x "$PYTHON311" ]; then
     echo "  ✓ python3.11 － $("$PYTHON311" --version 2>&1)（隨包可攜式，未裝進系統）"
@@ -93,6 +98,7 @@ if [ "${NODE_MAJOR:-0}" -ge 20 ]; then
 elif ls "$HERE"/node-*-linux-x64.tar.xz >/dev/null 2>&1; then
   mkdir -p "$RUNTIME/node"
   tar xf "$HERE"/node-*-linux-x64.tar.xz -C "$RUNTIME/node" --strip-components=1
+  chmod -R a+rX "$RUNTIME/node"   # 同上：前端服務也是以非 root 帳號執行
   NODE_BIN="$RUNTIME/node/bin/node"
   if [ -x "$NODE_BIN" ]; then
     echo "  ✓ node － $("$NODE_BIN" --version)（隨包可攜式，未裝進系統）"
