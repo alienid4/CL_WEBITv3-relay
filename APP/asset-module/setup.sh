@@ -51,28 +51,68 @@ fi
 echo "  ✓ 以 root 執行"
 
 # ===== 步驟 2：前置環境 =====
-step "檢查前置環境（python3.11 / node20 / git）"
+# 系統有 python3.11 / node20 就直接用；沒有的話，若這包裡帶了可攜式版本就改用它。
+# 為什麼要這樣：完全隔離的環境（不能上網、也沒有 yum repo／ISO）根本裝不了套件，
+# 而 RHEL 的 python3.11 RPM 又相依到較新的 OpenSSL，硬裝有弄壞系統的風險。
+# 可攜式版本是解壓即用、自帶相依（含自己的 OpenSSL），放在 /opt/webit3/runtime，
+# 不寫進 /usr、不動任何系統套件，要移除直接刪目錄。
+# （2026-07-29 公司 198-014：RHEL 9、無網路、無 repo，就是靠這條路裝起來的。）
+step "檢查前置環境（python3.11 / node20）"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+RUNTIME="${WEBIT_RUNTIME:-/opt/webit3/runtime}"
 MISS=0
-need() {  # need <指令> <版本指令> <補裝提示>
-  if command -v "$1" >/dev/null 2>&1; then
-    echo "  ✓ $1 － $($2 2>&1 | head -1)"
+
+if command -v python3.11 >/dev/null 2>&1; then
+  PYTHON311="$(command -v python3.11)"
+  echo "  ✓ python3.11 － $(python3.11 --version 2>&1)（系統既有）"
+elif [ -f "$HERE/python311-standalone.tar.gz" ]; then
+  mkdir -p "$RUNTIME/python311"
+  tar xzf "$HERE/python311-standalone.tar.gz" -C "$RUNTIME/python311" --strip-components=1
+  PYTHON311="$RUNTIME/python311/bin/python3"
+  if [ -x "$PYTHON311" ]; then
+    echo "  ✓ python3.11 － $("$PYTHON311" --version 2>&1)（隨包可攜式，未裝進系統）"
   else
-    echo "  ✗ 缺 $1 － 安裝方式：$3"
-    MISS=1
+    echo "  ✗ 可攜式 Python 解開後不可執行"; MISS=1
   fi
-}
-need python3.11 "python3.11 --version" "dnf install -y python3.11（或該發行版對應套件）"
-need node       "node --version"       "裝 Node 20：https://github.com/nodesource/distributions"
-need git        "git --version"        "dnf install -y git"
+else
+  echo "  ✗ 缺 python3.11 － 系統沒有，這包裡也沒有可攜式版本"
+  echo "     能上網的話： dnf install -y python3.11"
+  MISS=1
+fi
+
+# 一定要先 command -v 再呼叫：node 不存在時直接執行會回 127，
+# 那個退出碼會觸發本檔開頭的 ERR trap 讓安裝中斷（2>/dev/null 只擋輸出、擋不住退出碼）。
+if command -v node >/dev/null 2>&1; then
+  NODE_MAJOR="$(node --version | sed 's/^v//; s/\..*//')"
+else
+  NODE_MAJOR=0
+fi
+if [ "${NODE_MAJOR:-0}" -ge 20 ]; then
+  NODE_BIN="$(command -v node)"
+  echo "  ✓ node － $(node --version)（系統既有）"
+elif ls "$HERE"/node-*-linux-x64.tar.xz >/dev/null 2>&1; then
+  mkdir -p "$RUNTIME/node"
+  tar xf "$HERE"/node-*-linux-x64.tar.xz -C "$RUNTIME/node" --strip-components=1
+  NODE_BIN="$RUNTIME/node/bin/node"
+  if [ -x "$NODE_BIN" ]; then
+    echo "  ✓ node － $("$NODE_BIN" --version)（隨包可攜式，未裝進系統）"
+  else
+    echo "  ✗ 可攜式 Node 解開後不可執行"; MISS=1
+  fi
+else
+  echo "  ✗ 缺 node 20 以上 － 系統沒有，這包裡也沒有可攜式版本"
+  MISS=1
+fi
+
+# git 只用來標記版本（取不到就記 n/a），不是安裝的必要條件，缺了不擋。
+command -v git >/dev/null 2>&1 && echo "  ✓ git － $(git --version 2>&1)" \
+                               || echo "  · 無 git（不影響安裝，版本資訊會記成 n/a）"
+
 if [ "$MISS" != "0" ]; then
-  echo "!! 有缺的套件，補齊後再跑一次（這一步不算失敗，是提醒你先裝東西）"
+  echo "!! 前置環境不齊，補齊後再跑一次（這一步不算失敗，是提醒你先準備東西）"
   exit 1
 fi
-NODE_MAJOR="$(node --version 2>/dev/null | sed 's/^v//; s/\..*//')"
-if [ "${NODE_MAJOR:-0}" -lt 20 ]; then
-  echo "!! Node 版本要 >= 20，目前是 $(node --version)。請升級後再跑。"
-  exit 1
-fi
+export PYTHON311 NODE_BIN
 echo "  ✓ 前置環境齊全"
 
 # ===== 步驟 3：問設定 =====

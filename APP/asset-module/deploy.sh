@@ -21,7 +21,8 @@ mkdir -p "$DATA" "$DATA/logs" "$DATA/backups"
 
 echo "===== [2/7] 後端 venv + 相依 ====="
 if [ ! -x "$VENV/bin/python" ]; then
-  python3.11 -m venv "$VENV"
+  # PYTHON311 由 setup.sh 帶進來（隔離環境會指向隨包的可攜式 Python）；沒設就用系統的。
+  "${PYTHON311:-python3.11}" -m venv "$VENV"
 fi
 # 離線包情境：$APP/wheels 存在就代表這是離線包，改從本地 wheel 裝、完全不連 PyPI。
 # 為什麼要這樣：公司主機常常整台不能上網（2026-07-28 公司 198-014 就是），
@@ -92,7 +93,7 @@ WorkingDirectory=${APP}/frontend
 Environment=HOST=0.0.0.0
 Environment=PORT=${WEB_PORT}
 Environment=NUXT_PUBLIC_API_BASE=${API_BASE}
-ExecStart=/usr/bin/node ${APP}/frontend/.output/server/index.mjs
+ExecStart=${NODE_BIN:-/usr/bin/node} ${APP}/frontend/.output/server/index.mjs
 Restart=on-failure
 RestartSec=3
 
