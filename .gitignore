@@ -1,0 +1,51 @@
+# 參考資料/資料集不進版控（FOLDER_STRUCTURE_RULES：DOC/DATA 留在原地，不跟 AI/APP 一起搬遷）
+DOC/
+DATA/
+
+# 本機專屬設定
+.claude/settings.local.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# 資料庫檔（真實/開發用皆不進版控，D34 data/ 目錄本來就跟 app/ 分開）
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# Node / Nuxt（之後前端開發用）
+node_modules/
+.nuxt/
+.output/
+dist/
+
+# 環境變數與敏感檔（SECURITY_RULES.md）
+.env
+.env.*
+*.pem
+*.key
+
+# 舊版存檔資料夾（僅供對照，不需要版控歷史）
+_ARCHIVE_*/
+
+# 每次部署 stamp 的建置資訊（git commit+時間），不進版控
+APP/asset-module/backend/build_info.json
+
+# 真實資料一律不進版控（使用者鐵律：只留在 221 與本機，別上 git）。
+# 2026-08-20 實際踩到：docs/asset_dump.7z（1.88MB 資產庫傾印）被 `git add -A`
+# 掃進去並 push 上 GitHub。雖然是私有 repo、也沒進公開 relay（relay 只收
+# APP/ tests/ .project/），但仍違反規則，最後用改寫歷史才清掉。
+# 靠人記得不要 add 是不可靠的，這裡直接擋掉。
+*.7z
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+asset_dump*
+*_dump.*

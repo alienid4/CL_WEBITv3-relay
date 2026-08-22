@@ -1,0 +1,80 @@
+/* 示範配色亮色主題（2026-08-22 使用者：「我是要白底耶」，參考CL_Patch的
+   配色系統 APP/css/style.css）。沿用原本 CSS 變數名（--brand/--card/--mint…）
+   改成亮色值，讓每一頁自動連貫變亮、不會半殘。
+   字體：數字/標題用 Space Grotesk（vendored 本地）、中文用系統字。 */
+@import './fonts.css';
+
+:root, :root[data-theme='light'], :root[data-theme='dark'] {
+  --paper: #f4f6fa;               /* CL_Patch的頁面底色 */
+  --card: #ffffff;
+  --card-solid: #ffffff;
+  --sidebar: #ffffff;
+  --sidebar-active-bg: #e5f4ec;   /* CL_Patch的--c-primary-soft */
+  --sidebar-active-text: #009142;
+  --sidebar-text: #475569;
+  --topbar: #ffffff;
+  --mint: rgba(0,145,66,.08);
+  --mint-deep: rgba(0,145,66,.14);
+  --ink: #1f2937;                 /* CL_Patch的--c-text */
+  --ink-soft: #64748b;            /* CL_Patch的--c-text-soft */
+  --muted: #748094;              /* 原 #94a3b8 對白底只有2.6:1對比度太淡，加深到約3.6:1 */
+  --border: #e2e8f0;              /* CL_Patch的--c-border */
+  --border-strong: #cbd5e1;
+  --brand: #009142;  --brand-dark: #00703a;   /* CL_Patch的--c-primary/-dark */
+  --link: #1565c0;
+  --good: #43a047;  --good-soft: rgba(67,160,71,.12);    /* CL_Patch的--c-low */
+  --warn: #f9a825;  --warn-soft: rgba(249,168,37,.14);   /* CL_Patch的--c-medium */
+  --bad: #e64a19;   --bad-soft: rgba(230,74,25,.12);     /* CL_Patch的--c-high */
+  --radius: 12px;
+  --shadow: 0 1px 3px rgba(15,23,42,.08), 0 4px 16px rgba(15,23,42,.06);
+  --disp: 'Space Grotesk', 'Microsoft JhengHei', sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body, #__nuxt { height: 100%; }
+body {
+  margin: 0; color: var(--ink);
+  font-family: 'Microsoft JhengHei', 'PingFang TC', 'Noto Sans TC', sans-serif;
+  line-height: 1.6; -webkit-font-smoothing: antialiased;
+  background: var(--paper);
+}
+#__nuxt { position: relative; z-index: 1; }
+.mono, .num { font-family: var(--disp); }
+
+/* ===== 全域亮色卡片化：讓每頁 scoped 的 .card/table/input 都連貫亮色 ===== */
+.card {
+  background: var(--card) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: var(--shadow) !important;
+}
+.card-title { color: var(--muted) !important; letter-spacing: .5px; }
+
+table { border-radius: 12px; overflow: hidden; }
+th { background: #f8fafc !important; color: var(--ink-soft) !important; border-color: var(--border) !important; }
+td { border-color: var(--border) !important; }
+tbody tr:hover td, tr:hover td { background: rgba(0,145,66,.05) !important; }
+
+input, select, textarea {
+  background: #ffffff !important;
+  border: 1px solid var(--border-strong) !important;
+  color: var(--ink) !important;
+  border-radius: 8px !important;
+  transition: border-color .15s, box-shadow .15s;
+}
+input::placeholder, textarea::placeholder { color: #94a3b8; }
+input:focus, select:focus, textarea:focus {
+  outline: none; border-color: var(--brand) !important;
+  box-shadow: 0 0 0 3px rgba(0,145,66,.15) !important;
+}
+select option { background: #ffffff; color: var(--ink); }
+
+button, .btn { border-radius: 9px; transition: background .15s, box-shadow .15s, transform .05s; }
+button:active, .btn:active { transform: translateY(.5px); }
+
+a { color: var(--link); }
+::selection { background: rgba(0,145,66,.18); }
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb { background: rgba(0,0,0,.15); border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,.25); }
+::-webkit-scrollbar-track { background: transparent; }

@@ -1,0 +1,28 @@
+{
+  "_comment": "系統組月報的分類規則。使用者每月要把三張表貼進部門報告，這裡放的是「哪個東西算哪一類」——那是業務判斷、會變，所以放設定檔不寫死程式（同 location_groups.json / environment_groups.json 的理由）。改完重啟 webit3-api 即生效。",
+
+  "_location_why": "叢集名稱前綴對到機房——命名慣例本身就帶著答案（BQ_PROD_… / NH_PROD_… / DN_UAT_…），跟叢集用途看 LOG 是同一招。優先用這個而不是 vCenter IP 對照表，理由是**這個檔案會進公開 relay**：把「哪台 vCenter 服務哪個機房」寫死在這裡等於把內部拓撲一起送出去。前綴是代號，資訊量低得多。",
+  "location_prefix": [
+    { "name": "板橋", "match": ["BQ"] },
+    { "name": "內湖", "match": ["NH"] },
+    { "name": "敦南", "match": ["DN"] }
+  ],
+
+  "_vcenter_location_why": "名稱前綴認不出來時的退路（例如 VCF-WLD02-UAT-CL01-DC 這種沒有機房代號的）。⚠️ 這裡刻意留空：真實的 vCenter IP → 機房對照存在資料庫的 app_settings（key: report_vcenter_location），不進版控、不外送，由使用者在畫面上維護。設定檔只留結構，不留值。",
+  "vcenter_location": {},
+
+  "_cluster_service_why": "叢集用途分類。RVTools 沒有「這個叢集做什麼」的欄位，但你們的命名慣例帶著答案：BQ_PROD_LOG_Cluster 的 LOG 就是。2026-08-21 用 221 正式資料驗過：照這規則算出板橋 Log 服務 10 台，與使用者月報上的 10 台完全吻合。⚠️ 這是靠命名推的，哪天有叢集沒照慣例命名就會歸錯而且沒人發現——所以畫面上要標明「依叢集名稱判定」，讓看的人知道依據。",
+  "cluster_service": [
+    { "name": "Log服務", "match": ["LOG"] }
+  ],
+  "cluster_service_fallback": "交易服務",
+
+  "_cluster_env_why": "叢集屬正式還是測試。同樣看名稱：UAT/TEST/DEV 視為測試，其餘正式。",
+  "cluster_environment": [
+    { "name": "測試", "match": ["UAT", "TEST", "DEV"] }
+  ],
+  "cluster_environment_fallback": "正式",
+
+  "_platform_why": "月報表1的平台分類。使用者 2026-08-21 拍板：Windows 要拆 Server/Client（Win10/Win11 算 Client）；網路設備歸網路組統計，本報告只列圖上那幾類。排除的不是刪掉——要在表下方註明排除幾台，否則總量對不起來時沒人講得出為什麼。",
+  "excluded_platforms": ["網路設備", "儲存設備", "管理韌體(BMC)", "軟體", "未知"]
+}
