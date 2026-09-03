@@ -1,0 +1,422 @@
+{
+  "_comment": "技術決策紀錄。給接手的人（含 AI）看「為什麼這樣做」，避免後人把修正當成隨意寫法而改回去。contradicts 會被 checks.py 拿去掃文件，只放真的不該再出現的字眼。",
+  "decisions": [
+    {
+      "id": "T1",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "SQLite 連線要不要開 check_same_thread=False？",
+      "choice": "要開",
+      "why": "FastAPI 把 sync 的 get_db 依賴與 sync 路由都丟進 anyio threadpool，但不保證落在同一條 worker。單一請求時通常剛好同一條所以看不出問題；資產查詢頁一次並行打 5 支 API，執行緒被打散就炸 SQLite objects created in a thread can only be used in that same thread，前端顯示成「資產資料載入失敗」。這個故障先前被誤判為「暫時性快取問題、硬重整就好」，實際是真 bug。關掉檢查是安全的：每個請求各自建立/使用/關閉自己的連線，不會被兩條執行緒同時使用。",
+      "constraint": "不可以把連線改成跨請求共用的全域單例——那才會真的資料競爭。",
+      "evidence": "tests/asset_module/test_concurrent_requests.py（只有 db 層那支真的守得住，TestClient 重現不了 worker 交手）",
+      "contradicts": []
+    },
+    {
+      "id": "T2",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "主庫要不要啟用 WAL？",
+      "choice": "啟用 WAL + busy_timeout=5000",
+      "why": "讀不會被寫擋住（儀表板並行打多支 API，預設 rollback journal 下讀寫互卡會出現 database is locked），也是備份用 VACUUM INTO 能安全併發的前提。",
+      "evidence": "tests/asset_module/test_backup_health.py::test_主庫啟用了_WAL",
+      "contradicts": []
+    },
+    {
+      "id": "T3",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "備份要用檔案複製還是資料庫層快照？",
+      "choice": "VACUUM INTO + 完成後跑 PRAGMA integrity_check",
+      "why": "原本用 shutil.copy2 直接複製活動中的 .db。SQLite 資料庫是活的，複製當下若有寫入交易進行中，產出的檔案可能破損或缺資料，而且當下不會有任何錯誤——要等到真的拿去還原才發現。備份的價值就在還原那一刻，「以為有備份其實還原不了」是最糟的失敗模式。沒驗過的備份不算備份。",
+      "evidence": "tests/asset_module/test_backup_health.py（含背景執行緒持續寫入時做快照仍 PASS）",
+      "contradicts": []
+    },
+    {
+      "id": "T4",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "API 端點的預設權限？",
+      "choice": "除 login／logout／version 外，全部需登入",
+      "why": "原本 16 個端點沒掛 require_auth。前端每頁都有登入守衛，看起來安全，但 API 本身全裸——任何碰得到後端埠的人 curl 就能撈走全部資產與人員姓名電話，甚至 PUT 改欄位對應。根因是 S6 當初只保護 /api/auth/me，其餘「不在該切片範圍」留待後續，之後就沒人補。",
+      "constraint": "新增路由預設掛 require_auth；真要公開必須明確加進 test_auth_coverage.PUBLIC 白名單（強迫做一次決定）。",
+      "evidence": "tests/asset_module/test_auth_coverage.py（走 FastAPI 路由表自動涵蓋新端點）",
+      "contradicts": []
+    },
+    {
+      "id": "T5",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "/api/topology 原設計為「讀免登入」，要維持嗎？",
+      "choice": "改為需登入",
+      "why": "這張圖含系統依賴與 SPOF 標記，等於直接告訴人「打哪一台全部會倒」，是最不該公開的資料；頁面本來就在登入牆後，公開讀沒有帶來任何好處。健康檢查改用 /api/version（deploy.sh 用的就是它）。",
+      "note": "這推翻了交接摘要_2026-07-18 記載的原設計。使用者 07-18 已知悉並未否決。",
+      "contradicts": []
+    },
+    {
+      "id": "T6",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "時間欄位存 UTC 還是本地時間？",
+      "choice": "一律本地時間，且由 Python 明確寫入，不倚賴資料表 DEFAULT",
+      "why": "原本 schema 用 SQLite datetime now（UTC），scan_runs 卻用 Python datetime.now（本地），同一次掃描在兩張表差 8 小時，畫面顯示的掃描時間是錯的。改 schema 之後還發現：CREATE TABLE IF NOT EXISTS 不會修改既有資料表的欄位預設值，所以正式環境的新資料仍會用舊的 UTC 預設——改了 schema 卻只對全新資料庫生效，是最容易漏掉的那種。",
+      "constraint": "sessions 表刻意不動：expires_at 由 auth.py 用 UTC 寫、也用 UTC 比對，自成一套是正確的；動它會讓所有人登入立刻失效。",
+      "evidence": "tests/asset_module/test_semantic_bugs.py（含遷移冪等性與「假 DEFAULT 值永不出現」）",
+      "contradicts": []
+    },
+    {
+      "id": "T7",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "比對引擎判斷「同一台主機」的鑰匙？",
+      "choice": "以 IP 為主鍵、主機名稱為輔（符合契約 D3），且空字串要排除",
+      "why": "去重原本只比對 hostname。網段掃描抓不到反解名稱時 hostname 是空字串（不是 NULL），於是所有「叫不出名字」的主機在 hostname = 空字串 這個條件下全部長得一樣，第二台之後被當成「已經記過了」跳過。實測 3 台未登記主機因此從未進過問題清單，畫面只顯示 1 筆。",
+      "evidence": "tests/asset_module/test_semantic_bugs.py::test_多台無主機名的未登記主機各自產生漏登記",
+      "contradicts": []
+    },
+    {
+      "id": "T8",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "儀表板磚塊的數字與點進去的清單筆數不一致，以哪邊為準？",
+      "choice": "兩邊用同一段判定邏輯；「掃到卻沒登記」對全部資產比對，不受環境篩選影響",
+      "why": "磚塊拿環境篩選後的子集去比，登記在「測試」環境的機器被算成未登記，磚塊顯示 4；但 /adopt 不分環境只有 3。「掃到卻沒登記」的語意是「整個資產清單都沒有它」，登記在別的環境仍然是有登記。數字對不上的下鑽比不能點更糟，使用者會連整個畫面都不信。",
+      "evidence": "tests/asset_module/test_dashboard_drilldown.py、test_semantic_bugs.py",
+      "contradicts": []
+    },
+    {
+      "id": "W1",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "開發要在本機（Windows）還是直接在 221？",
+      "choice": "在 221 就地開發：完整 repo clone 到 /opt/webit3/src，systemd 直接指向它",
+      "why": "本機環境與 221 差異造成的問題耗掉大量時間（localhost 解到 IPv6、.nuxt 產物壞、CORS 只放行 localhost、要另建 demo DB），全都與產品無關。SQLite 跨執行緒那個 bug，221 的 journalctl 早就有完整 exception，本機卻要重現半天。另外舊流程是 tar 覆蓋 /opt/webit3/app，在伺服器上手改會被無聲抹掉。",
+      "constraint": "git 操作一定要用 sudo -u sysctl，以 root 提交會讓 git 物件變 root 擁有、服務讀不到。前端 build 後才能 chown，順序反了 .output 變 root 擁有、服務起不來（錯誤訊息是誤導性的 Cannot find module）。",
+      "contradicts": []
+    },
+    {
+      "id": "W2",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "程式碼要怎麼送到只能用 public GitHub 的公司 Notebook？",
+      "choice": "單向匯出去識別化快照（.project/make_relay.py），不是主 repo 的鏡像",
+      "why": "主 repo 含內網拓撲與完整歷史，不能直接轉公開——就算現在改乾淨，git log -p 還是挖得回舊版本。relay 每次重新產生、單一 commit、無歷史可挖。",
+      "constraint": "三道關卡缺一不可：替換表 -> 殘留掃描 -> 在產出物上跑 pytest。第三道是後來補的：替換表改到測試裡的固定值，導致主 repo 全綠、送出去那份卻是紅的。relay 工具本身必須排除（EXCLUDE），它的替換表裡直接寫著真實 IP。",
+      "contradicts": []
+    },
+    {
+      "id": "W3",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "GitHub 憑證要不要放在 221？",
+      "choice": "目前不放；由 Windows 端執行 relay 推送",
+      "why": "221 同時對內網提供網頁服務，多一個 token 就是多一個風險面。",
+      "note": "使用者已提出用 repo-scoped deploy key 讓 221 自己推（少一步），尚未拍板。見待決事項。",
+      "contradicts": []
+    },
+    {
+      "id": "P1",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "測試綠燈代表功能正確嗎？",
+      "choice": "不代表。新測試必須逐一還原修正、確認會變紅，才算數",
+      "why": "使用者肉眼掃過畫面就抓到 4 個 bug，而當時 112 項測試全綠。原因不是測試太少，是測試驗的是「程式有沒有照我的假設跑」——假設錯了測試就跟著錯，而且永遠是綠的（自我循環）。此後每支新測試都做還原驗證。",
+      "note": "既有 100+ 項測試裡還有多少是自我循環的，尚未查——併入待辦的語意稽核。",
+      "contradicts": []
+    },
+    {
+      "id": "P2",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "版號可以拿來確認換版成功嗎？",
+      "choice": "不可以。要看 /api/version 的 started_at（行程啟動時間）",
+      "why": "deploy.sh 原本用 systemctl enable --now，對已在跑的服務不做任何事，新程式碼根本沒載入；但 version.json 是每次請求即時讀檔，版號照樣跳成新版，看起來部署成功。實際跑的還是舊碼（新端點 404、未登入仍可讀資料）。已修 deploy.sh 改用 restart，並讓 /api/version 直接問 git 並回報 started_at。",
+      "contradicts": []
+    },
+    {
+      "id": "Q1",
+      "date": "2026-07-20",
+      "status": "confirmed",
+      "question": "git push 權限要不要放行給 AI",
+      "choice": "放行",
+      "why": "不放行的話每次 relay／push 都要使用者手動執行。",
+      "constraint": "AI 不能改自己的權限檔（實測 2026-07-20：編輯 settings.local.json 加 git push 被 auto-mode classifier 擋下——這是防自我提權，擋得對）。需使用者手動在 .claude/settings.local.json 的 allow 加 \"Bash(git push:*)\" 後重開 Claude Code。此步驟未完成前，push 仍會逐次要確認。",
+      "contradicts": []
+    },
+    {
+      "id": "Q2",
+      "date": "2026-07-18",
+      "status": "pending",
+      "question": "GitHub relay repo 何時轉 public",
+      "owner": "使用者",
+      "effort": "5 分",
+      "difficulty": "簡單",
+      "user_action": "在 GitHub 上改可見性（帳號設定，我不碰）",
+      "ai_action": "轉之前再跑一次 make_relay.py 確認內容仍乾淨",
+      "why_matters": "公司 Notebook 只能存取 public repo；內容已去識別化並通過殘留掃描＋產出物測試，轉的時候不用再洗"
+    },
+    {
+      "id": "Q3",
+      "date": "2026-07-20",
+      "status": "confirmed",
+      "question": "異地備份要放哪裡",
+      "choice": "放 222（另一台常開 Linux 伺服器）的 /ai_backup",
+      "why": "221 三顆 NVMe 同屬一個 LVM，機器內設任何路徑都是假異地。222 是另一台實體機、221 本來就連得到，比推到個人 Windows(會關機) 穩。異地路徑已改成畫面可設(app_settings)，異地複製機制本就現成(run_backup 會複製到 offsite_dir)。",
+      "constraint": "最後一步(在 221 掛載 222:/ai_backup、畫面設路徑、立即備份把燈點綠)是 221 上的一次性 infra 動作，見 AI/SOP_異地備份_掛載222.md，待使用者執行。",
+      "evidence": "tests/asset_module/test_backup_health.py（異地路徑 app 設定優先/退回env/空清除/設了不再報未設定）",
+      "contradicts": []
+    },
+    {
+      "id": "V1",
+      "date": "2026-07-20",
+      "status": "confirmed",
+      "question": "vCenter 自動盤點要直連 API 還是走檔案中繼？",
+      "choice": "檔案中繼（方案 B）：一台常開 Windows 排程跑 RVTools 匯出到資料夾，系統自動抓最新檔",
+      "why": "直連要我們存 vCenter 帳號、能連到它、還要自己追它每次改版的 API 變化——最會變的擔子全揹在我們身上，斷了還可能悄悄斷。走中繼檔後追 VMware 改版的責任在 RVTools 身上，我們只依賴很穩的 Excel 格式；且沿用現成的 rvtools_import，幾乎不用再寫。",
+      "constraint": "vCenter 自己不會排程匯出——要一台常開 Windows 用工作排程器跑 RVTools CLI。鮮度燈示警「今晚沒收到」。見 AI/SOP_vCenter每晚自動匯入.md。日後要更即時再評估直連 API（同一套身分解析可沿用）。",
+      "evidence": "tests/asset_module/test_vcenter_autoimport.py、test_rvtools_import.py",
+      "contradicts": []
+    },
+    {
+      "id": "Q4",
+      "date": "2026-07-20",
+      "status": "confirmed",
+      "question": "Git 流程要不要改成 221 用 deploy key 自己推 GitHub",
+      "choice": "要，用 repo-scoped deploy key 讓 221 自己推",
+      "why": "現在 Windows 當中間人是繞路。deploy key 只綁這一個 repo（不是整個帳號），風險面比放 token 小很多，是合理取捨。",
+      "constraint": "這會在對內網提供網頁服務的 221 上放一把可寫入的金鑰——是 W3 當初特意避開的，但 repo-scoped 已把風險縮到最小。待使用者：在 221 產金鑰、公鑰掛到 GitHub repo Deploy keys（勾寫入）；之後 AI 把 relay 腳本搬到 221 測通（需 221 存取，尚未做）。",
+      "contradicts": []
+    },
+    {
+      "id": "Q5",
+      "date": "2026-07-20",
+      "status": "confirmed",
+      "question": "facts 收集要不要在目標主機佈 SSH key",
+      "choice": "要，佈 key 收 facts",
+      "why": "不佈只能靠 MAC／開放埠／TTL 猜；佈了能直接拿到真主機名、OS、序號、機型——這是「掃到不認識的機器時能給多少辨識線索」的關鍵。",
+      "constraint": "此決定其實已在 S19 一鍵納管/排程自動納管落地：Linux 走 onboard_engine 佈 webit3scan 收集公鑰、Windows 走 WinRM 不佈 key；已在 .222/.223/.230 實測收到真序號。要新增很多台就用排程自動納管（授權網段）。剩：FACTS 大量佈署的 curl 一行版仍待做（見記憶 project_facts_ssh_bootstrap）。",
+      "contradicts": []
+    },
+    {
+      "id": "T9",
+      "date": "2026-07-18",
+      "status": "confirmed",
+      "question": "10.30.13.31 這類不存在的假 IP 要留著嗎",
+      "choice": "刪除。資產只保留真實 IP",
+      "why": "使用者要測真實情況：真的有那台機器，其餘欄位才是假資料。不存在的 IP 會讓「登記卻掃不到」永遠亮紅燈，掩蓋真正的問題。10.20.* 與 10.30.* 已於 07-18 清除（刪除前備份）。",
+      "contradicts": []
+    },
+    {
+      "id": "M-VM",
+      "date": "2026-07-21",
+      "status": "confirmed",
+      "question": "戰情室要不要保留獨立的 vmware（VM）模組？",
+      "choice": "拿掉。不做獨立 vmware 模組，總模組數 10 → 9",
+      "why": "採集端已由 M1 的 RVTools 匯入（rvtools_import.py 吃 vInfo）涵蓋——VM 進來就是資產，資產盤點頁本來就看得到。舊系統的 vmware 模組只是「主管開門版 vCenter 唯讀總覽」，再開一個模組是重複呈現同一份資料。",
+      "constraint": "刻意放棄的是「聚合視角」：叢集容量、host:VM 密度、datastore 用量這類逐台看不出來的統計，拿掉後就沒有。若日後真有人要求，作法是擴充 RVTools 匯入分頁（vHost/vCluster/vDatastore）並在資產盤點內加一個檢視，而不是復活獨立模組。另：舊系統「沒資料就顯示假資料」的行為不得沿用，沒資料就明說沒資料。",
+      "contradicts": []
+    },
+    {
+      "id": "S1",
+      "question": "外部掃描分多天匯入時，怎麼算「一輪掃描」？",
+      "choice": "",
+      "status": "pending",
+      "note": "系統用 MAX(scan_time) 當最新一次掃描，分批匯入會只認最後一批。方案A：掃完一輪才匯入、統一 scan_time（不動核心，建議）。方案B：改成累積視窗（動到四態/比對引擎，風險高）。2026-07-30 提出待拍板。"
+    },
+    {
+      "id": "S2",
+      "question": "「網段未涵蓋」要不要成為納管第五態？",
+      "choice": "",
+      "status": "pending",
+      "note": "目前沒掃到的機器一律判「失聯」，但「防火牆不通/還沒掃」與「機器真的不在」要做的事完全不同。加第五態會動到四態互斥窮盡的設計。2026-07-30 提出待拍板。\n【2026-08-24 部分處理】體檢引擎（health_check.py）加了「掃描涵蓋」這一層：這台的網段最近一次掃描若完全沒掃到任何機器，判「掃描沒涵蓋」（資料燈，去加掃描目標），不判「失聯」（機器燈，去問機器還在不在）。實測 221：原本 4641 台全判失聯，加了這層之後失聯剩 320 台、4321 台改報掃描沒涵蓋。納管四態本身還沒動——這只解了「體檢」這條路徑上的誤判，四態要不要加第五態仍未拍板。"
+    },
+    {
+      "id": "S3",
+      "question": "掃描網段清單要用系統反推，還是用網管的網段表？",
+      "choice": "以網段表為主清單，反推降級為對帳工具，掃描結果當第三方事實",
+      "status": "confirmed",
+      "note": "2026-07-31 拍板。使用者疑慮是網段表人工維護會有失誤——成立，但反推同樣會錯且方向不同：反推只看得到「已登記資產」所在的網段，而沒登記的機器正是要找的目標，且它是拿可能填錯的資產 IP 欄位推導的。決定性理由是「這段不能掃」只有網段表有（表上 H 欄弱掃說明已標出 10.99.129.0/24、10.99.130.0/24 員工電腦與 10.99.133.0/24 重複設備IP 要排除掃描），反推永遠推不出來。三方對帳：表有反推沒有=空網段或整段未登記；反推有表沒有=表未更新或私接（盤點最該抓的）；表登記未使用卻掃到回應=表過期。"
+    },
+    {
+      "id": "S4",
+      "question": "建議排除掃描的網段要在哪一層擋掉？",
+      "choice": "產 segments.txt 時就不放進去，並在檔頭註解標明排除了幾段與原因",
+      "status": "confirmed",
+      "note": "2026-07-31 拍板。產完靠人記得刪＝遲早有一天會忘，而掃到分公司員工電腦不是技術問題是會被質疑的問題。檔頭要標原因，讓「刻意不掃」與「漏掉」看得出差別。待網段表匯入做完後接上——目前 fmt=txt 尚未有排除來源。"
+    },
+    {
+      "id": "C1",
+      "question": "遠端收集用共用的 sysinfra 管理帳號，還是專用帳號 webit3scan？",
+      "choice": "專用帳號 webit3scan（一度改成 sysinfra 又改回）",
+      "status": "confirmed",
+      "note": "共用 sysinfra 的四個代價：①系統每天登入三千台，管理帳號的登入紀錄被機器流量塞滿，出事查『誰凌晨三點登入』時人跟系統分不開 ②account_collector 會看管理帳號最後登入，我們天天登入讓那個稽核欄位失效 ③無法單獨撤銷，停系統存取就得動 sysinfra 影響真人 ④權責混淆。專用帳號三道鎖：authorized_keys 帶 from= 限來源、sudoers 只給唯讀白名單（不含 /etc/shadow）、撤銷刪一行即生效。"
+    },
+    {
+      "id": "C2",
+      "question": "收集要從哪台發動？（sysinfra 有來源限制，只能從特定主機連入）",
+      "choice": "系統自己那台就是 ansible 主機，不用中繼",
+      "status": "confirmed",
+      "note": "2026-08-16 使用者確認。原本擔心要透過另一台 ansible 主機中繼，確認後不需要——省掉一整層架構。"
+    },
+    {
+      "id": "C3",
+      "question": "現有 ansible 能不能幫我們建 webit3scan 帳號？",
+      "choice": "目前不能",
+      "status": "confirmed",
+      "note": "2026-08-16 使用者確認。影響：pull 收集器需要的帳號沒辦法用現成 ansible 佈；要嘛另外請人／請資安佈一次，要嘛那些主機改走 Push Agent（agent 不需要我們建帳號）。這是下一輪要先解的卡點。"
+    },
+    {
+      "id": "C4",
+      "question": "client 端四條收集路（掃描／SSH-WinRM pull／Push Agent／檔案匯入）要不要收斂成單一入口？",
+      "choice": "要收斂",
+      "status": "confirmed",
+      "note": "2026-08-16 使用者拍板，尚未實作。目標：使用者只要說『我要把這些機器納進來』，輸入網段或 IP 清單按一下，系統自己選路（22 通→SSH／445 通→WinRM／都不通但活著→產 Push Agent 安裝包並列出要請人裝的清單／完全不通→列進只能匯入）。檔案匯入維持獨立，它是『既有資料進場』不是『收集』。動到 /adopt 流程。 【2026-08-16 已實作完成】收斂後的入口在 /adopt 上半段，引擎 backend/collect_dispatch.py；四種下場在同一張結果表上分得出來，每一列都直接接下一步動作。檔案匯入維持獨立入口未動。"
+    },
+    {
+      "id": "C5",
+      "question": "資安／維運同意佈一次性 playbook 之後，Linux 以外的平台怎麼收？",
+      "choice": "四類分開走：Linux=Ansible playbook／AIX=一次性納管腳本／Windows=WinRM 不建帳號／網路設備=SNMP",
+      "status": "confirmed",
+      "note": "2026-08-16 拍板。關鍵是『佈 playbook』只解得了 Linux。AIX：Ansible 不支援 AIX，而且 Linux 腳本照跑一定失敗（mkuser vs useradd、chuser vs passwd -l、AIX 未必裝 sudo）。公司 8 台，選方案 A（一次性納管腳本）而不是改走 Push Agent——agent 目前只收 disk/memory，facts／服務／帳號盤點全都收不到，要補等於把整條收集鏈在 agent 端重寫；而 AIX 取序號機型走 uname -M/-u 不需要 root，腳本比 Linux 版還簡單，8 台跑一次就換到跟 Linux 對齊的完整能力。也不用既有的 sys004 標準帳號（方案 C）——那會直接踩 C1 剛定案要避開的稽核汙染。Windows：2026-07-20 已定案走 WinRM/CIM，完全不動目標機，要的是 AD 一組唯讀服務帳號＋目標機 Enable-PSRemoting＋防火牆設定檔放行 5985（實測 .101 踩過：網卡被判『公用網路』時規則預設關閉，症狀只有連線逾時）。網路／儲存設備沒有可佈的 OS 帳號，走 SNMP。"
+    },
+    {
+      "id": "C6",
+      "question": "AIX 上的收集帳號要不要也叫 webit3scan？",
+      "choice": "同一個收集身分，但 AIX 用 8 字元的名字 webit3sc（可設定）",
+      "status": "confirmed",
+      "note": "2026-08-16。使用者提議同名，方向對，但撞到 AIX 的硬限制：sys0 的 max_logname 預設 9（＝可用 8 個字元），webit3scan 是 10 個字元，mkuser 直接拒絕。放寬要 chdev -l sys0 -a max_logname= 並**重新開機**——為了一個帳號名重開 8 台正式 AIX 不划算。所以做成 per-platform 設定值 collect_ssh_account_aix，預設 webit3sc；該環境若本來就放寬過，把設定值改成 webit3scan 就完全同名。連帶要改的：試連與 facts 收集的 SSH 身分都要跟平台走，否則拿 webit3scan 去登只有 webit3sc 的機器永遠 Permission denied，而訊息看不出是名字對不上還是金鑰沒佈。"
+    },
+    {
+      "id": "G1",
+      "question": "docs/ 與 AI/ 底下可不可以有真實 IP、主機名、公司識別字？要不要比照 APP/ tests/ 做殘留掃描？",
+      "choice": "維持現狀：docs/ 與 AI/ 允許有真實值，不做殘留掃描",
+      "status": "confirmed",
+      "note": "2026-08-20 使用者拍板（選項2）。這兩個目錄是內網情報集中處，make_relay.py 的 INCLUDE 只有 APP/ tests/ .project/，所以它們永遠不會進公開 relay、也不會進公司主機的 patch。\n\n⚠️ 要講清楚這個選擇實際代表什麼，免得日後有人（包括 AI）誤以為有保護：docs/ 與 AI/ 本來就在 git 裡，也就是說真實 IP 與公司識別字確實存在於GitHub 上的私有 repo。「真實資料不上 git」這句話對這兩個目錄不成立。實際的保護只有兩層：(1) repo 是私有的 (2) relay 的 INCLUDE 清單把它們排除。\n\n所以 checks.py 的殘留掃描刻意只掃 RELAY_SHIPPED_PREFIXES，在 docs/ 寫真實 IP 不會被擋——這是設計，不是漏洞。但反過來說：任何會進 relay 的東西一律不得有真實值，那條線不能鬆。\n\n同日相關事件：docs/asset_dump.7z（1.88MB 資產庫傾印）被 git add -A 掃進版控並 push，事後改寫歷史清除。那件事的教訓是「大型資料檔」不該進版控（已由 checks.py 的『無大檔進版控』擋下，閾值 500KB），跟本決策的「文字型內網資訊可以留在 docs/」是兩件不同的事，不要混為一談。"
+    },
+    {
+      "id": "M1",
+      "date": "2026-08-20",
+      "status": "confirmed",
+      "question": "MICS事故檢查清單要用什麼視角設計聯絡人資訊？",
+      "choice": "以機器為單位(嚴重度/位置/聯絡不到警示)取代以人為單位的通訊錄(姓名/角色/電話/代理人/部門主管)；SP保管者不列入聯絡人(我們自己就是SP，不用聯絡自己，全部聯絡AP管理者即可)；後端算好嚴重度優先+距離近優先的排序，不給人工調整",
+      "why": "使用者實測221正式資料反饋：事故當下要回答的是「這台機器多重要、聯絡不到怎麼辦」，不是「這個人是誰」。距離/關係(depth/edge_type)是系統內部排序依據，不該擺出來給人看。",
+      "constraint": "之後新增聯絡角色時，先確認是不是「自己人」(不用列進清單)，只有系統/資產真正需要外部聯絡窗口的角色才列入checklist_item",
+      "evidence": "tests/asset_module/test_blast_radius.py::test_SP保管者不列進聯絡清單_我們自己就是SP不用聯絡自己",
+      "contradicts": []
+    },
+    {
+      "id": "M2",
+      "date": "2026-08-20",
+      "status": "confirmed",
+      "question": "/blast查詢結果「受影響節點數」與使用者人工統計「27套」有落差(畫面顯示23，查不到負責人2)——落差原因待查",
+      "choice": "已查證：使用者提供的27台人工清單中，6台VM缺vm_uuid(RVTools從沒匹配到)，1台(SECSVR169-210)資料庫完全查無登記——不是查詢口徑問題，是真實資料缺口",
+      "why": "受影響節點數是BFS命中的所有節點(含business_service/cluster等非硬體節點)，跟人工用「幾台主機」算的口徑不一定一致；但確切少了哪幾台、為什麼漏，需要使用者提供當時查的是哪個系統/主機才能對照221真實資料查證",
+      "constraint": "這6台要去vCenter核對是否存在/掛哪台ESXi再手動補登記；SECSVR169-210要先確認正確主機名/IP",
+      "evidence": null,
+      "contradicts": []
+    },
+    {
+      "id": "M3",
+      "date": "2026-08-20",
+      "status": "confirmed",
+      "question": "6台VM(173-034/174-049/175-047/175-087/175-088/175-220)缺vm_uuid，導致VM→ESXi關聯查不到；SECSVR169-210資料庫無登記",
+      "choice": "更正M3原判斷：不是RVTools沒收到這6台資料，是收到了但比對信心不足（只有IP+主機名對上，無vm_uuid強識別），卡進merge_review人工複核佇列，從未被處理",
+      "why": "使用者提供的板橋機房27台人工盤點清單比對221正式庫發現的真實資料缺口，非查詢口徑差異",
+      "constraint": "待使用者去vCenter/現場核對後回報，再決定是否需要RVTools匯出流程層面的修正（例如為什麼這6台匯出時沒收錄）",
+      "evidence": null,
+      "contradicts": []
+    },
+    {
+      "id": "M4",
+      "date": "2026-08-20",
+      "status": "partial",
+      "question": "merge_review複核佇列後端邏輯有，但從未做過前端頁面——221正式庫現有3333筆open、涉及1959台不同機器的待複核紀錄，全部卡住沒人看過，怎麼處理？",
+      "choice": "A＋B 都要，但先做 B 的一個子集：只放寬「vCenter 有 vm_uuid、資產這邊還沒填」這一種",
+      "why": "查M2/M3(板橋機房27台缺口)時往下追一層才發現：RVTools每次匯入遇到只有IP+主機名相符(無vm_uuid強識別碼)的VM就丟進merge_review等人工確認，但沒有UI能讓人確認，佇列只增不減，累積到221已達1959台，遠比單一事故看到的6台缺口嚴重\n\n【2026-08-24 更新】去 221 逐筆拆開 3333 筆之後發現原本的 A/B 是問錯問題：(1) 3333 筆不是 3333 個判斷——vCenter 匯入跑過幾輪，同一台被記了 4 筆，2140 筆其實只有 1013 台。(2) 那 2140 筆的證據比系統現在用的規則更強：來源帶 vm_uuid、資產那邊 uuid 是空的、沒有任何衝突，合併不是冒險，合併正是在把身分證號補上去，補完之後 vCenter 每次同步都走強識別碼那關，不會再生新的待審核（治源頭不是擦地板）。(3) 剩下 1193 筆才真的需要人看：133 筆 uuid 衝突（最該看）、388 筆多候選、673 筆 dynassets 無強識別碼。\n規則已實作（merge_autoresolve.py，12 個守衛測試）並接進 /import 的批次合併流程，畫面上兩條規則分開列、分開執行。**但按鈕還沒按**——使用者說目前沒空抽驗，所以真實資料一筆都沒動。",
+      "constraint": "兩個方向沒定案：(A)做一個複核頁面讓人手動逐筆/批次核准；(B)放寬自動比對規則(IP+主機名同時吻合就直接信任，不用人工確認)。這個決定會影響往後所有匯入資料的可信度，需使用者拍板方向再動工",
+      "evidence": "api.py 已有 list_merge_reviews/merge_reviews_auto_matchable/merge_reviews_batch_merge 三個後端端點，但 frontend/pages 底下沒有任何頁面呼叫它們",
+      "contradicts": []
+    },
+    {
+      "id": "H1",
+      "date": "2026-08-25",
+      "status": "open",
+      "question": "體檢十項的燈號口徑要不要調？現在「完全沒問題」是 0 台。",
+      "choice": null,
+      "why": "0 台不是標準太嚴，是 4333 台收不到資料——系統目前摸不進去任何一台，那一項就吃掉了全部。等收集通了這個數字才會有意義。在那之前若想看到綠燈，唯一誠實的做法是把「收不到資料」暫時排除在燈號之外，但那等於假裝問題不存在。",
+      "constraint": "傾向不調：體檢的用途是把「為什麼要看」講清楚，不是讓數字好看。先讓收集通，數字自己會變。"
+    },
+    {
+      "id": "H2",
+      "date": "2026-08-25",
+      "status": "open",
+      "question": "1193 筆真的要人看的複核，要不要做逐筆複核頁面？",
+      "choice": null,
+      "why": "批次規則解掉的是證據夠強的那批；剩下 133 筆 uuid 衝突、388 筆多候選、673 筆 dynassets 沒有強識別碼，只能人判。現在沒有任何 UI 能逐筆處理。",
+      "constraint": "133 筆 uuid 衝突最該先做——兩邊 uuid 不同通常代表機器被重建或複製過，那是真的異常，不是資料髒。"
+    },
+    {
+      "id": "H3",
+      "question": "頁A實體機台數一直對不上管理員 PPT 的 255 台，該以誰為準？",
+      "choice": "以系統算的為準（含 Oracle／AS400／AIX／Power），255 是不完整的，不要再往它逼近",
+      "status": "confirmed",
+      "note": "2026-08-26 使用者跟管理人員討論後回報：管理員那份 255 台**只算了跟 Linux VM／Windows VM 有關的 ESXi 主機**，漏掉 Oracle 主機、AS400、AIX、Power 系列。管理人員自己也同意那些應該列進來——「應該要把全部的主機都納管，是他們那邊少放了」。\n\n⚠️ 這**推翻了 8/26 的工作方向**。當時把 255 當成正確答案，花了一整輪逐一排除機型（PC、NB、TippingPoint、Paysecure、NVIDIA 組裝機…）想把 552 逼近到 255，最後停在 299 並說「還差 44 台，挑不出更多雜訊」。**那 44 台差距的成因不是我們多算，是他們少算。**\n\n所以：不要再做「逼近 255」這件事，也不要為了對上那個數字再排除任何機型。8/26 交接提到的「接失聯過濾把 299 再往 255 壓」那條線**取消**——失聯過濾本身或許仍有價值（下線的機器要不要算），但那是獨立問題，不可以拿「能不能對上 255」當判斷依據。\n\n畫面上要主動講出這件事：頁A 需註明「已含 Oracle／AS400／AIX／Power 系列；管理員版本原未列入」，否則有人拿兩份對照又會以為系統多算。\n\n教訓：**把外部給的數字當成正確答案來逆推，等於把對方的口徑缺陷變成自己的 bug。**先確認那個數字怎麼來的，再決定要不要對齊。"
+    },
+    {
+      "id": "H4",
+      "question": "被主機報表排除的那些機器（網路設備 642、儲存 86、BMC 59，以及頁A 排除的 17 台 PC／NB／資安設備），實際上有沒有人在管？",
+      "choice": "",
+      "status": "open",
+      "note": "2026-08-26 架構面提出，**尚未查證**。\n\n系統一路以「網路設備歸網路組統計」為由把 642 台排除在月報表1 之外，頁A 也排除了 17 台 PC／NB／入侵偵測／金流加密設備。這些排除在**報表口徑上是對的**（主機盤點不該混進 PC 與網路設備，會稀釋訊號）。\n\n但「歸網路組統計」這句話**從來沒有被確認過**——它是我們寫在設定檔註解裡的說法，不是跟網路組確認過的事實。如果實際上沒有人在統計，那 642 台的處境是：**每個人都以為別人在管**。金融業的稽核缺失很多是這樣來的。\n\n特別要看的兩台型號：`TippingPoint 5600 TXE`（入侵偵測防禦）與 `Paysecure`（金流加密機）。它們一樣會 EOS、要打補丁、被稽核問，而且是資安設備——從主機報表消失的代價比一般 PC 高得多。\n\n要確認的具體問題（問網路組／資安組）：\n  1. 網路設備的 EOS 與韌體更新，有沒有一份清單在追？誰維護？\n  2. TippingPoint／Paysecure 這類資安設備歸哪一組？在誰的清單上？\n  3. 若都沒有，那它們應該回到本系統的哪個視角（不是回到主機報表，而是另開一個「非主機設備」的追蹤面）？\n\n⚠️ 在確認之前，**不要因為「可能沒人管」就把它們塞回主機報表**——那會同時毀掉兩件事：主機報表的口徑，以及「這些設備需要自己的管理方式」這個真正的結論。排除的是視角，不是資料；解法是補上缺的視角，不是把東西倒回錯的地方。\n\n已做的緩解：頁A 的排除區塊現在會印出「排除的是視角，不是資料……不代表沒人要管；請確認它們在各自的權責清單上有歸屬」，讓看報表的人至少知道要去問。"
+    },
+    {
+      "id": "H5",
+      "question": "分類名稱以哪一份為準：部門簡報，還是系統管理員那份盤點表？",
+      "choice": "以系統管理員那份《系統盤點(全環境)Data.xlsx》為準",
+      "status": "decided",
+      "note": "2026-08-26 使用者拍板：「A 七組錯字 管理員那份是源頭」。\n\n背景：`report_groups.json` 的 19 個分類名稱當初是照部門簡報抄的，拿管理員那份 Excel 一比，有 8 個名字抄歪——嘉寶/嘉實、電子/雷影、版控/監控、中心/中台、通路/憑證、處理服務/服務、服務/股務。同一個東西兩種寫法，字串比對永遠對不上。\n\n已做的：`report_groups.json` 8 個名稱改成 Excel 的寫法；`db._rename_system_categories()` 把 DB 裡存的舊名稱一併換掉。\n\n⚠️ **為什麼需要 migration**：APID→分類 對照表存在 `app_settings`，值就是分類名稱字串。只改白名單的話，DB 裡的舊名稱不會報錯，只會在 `_category_defs()` 查不到而**靜靜地從報表上消失**（歸不進核心/非核心，變成未分類）。「不會報錯但數字悄悄變了」正是報表最不能接受的失敗方式，所以改名一律配 migration。\n\n⚠️ 這條只涵蓋**分類名稱**。機器本體（是否存在、資產序號、主機名、IP、機房、環境別、資產狀態、I/C/A）仍然一律以 **CIA 資訊資產清冊**為準——使用者原話：「只有 H 分類可以參考。其他的類別、主機名稱，其實都是要按照《資訊資產清冊》來看。」"
+    },
+    {
+      "id": "H6",
+      "question": "部門報告的「分類」跟 CIA 資訊資產清冊是什麼關係？報表頁B 的「核心交易／非核心／測試」三桶要看分類還是看清冊的環境別？",
+      "choice": "分類是報告專用的獨立分類，跟 CIA 無關；三桶全部看分類",
+      "status": "decided",
+      "note": "2026-08-26 使用者原話：「這個應該跟 CIA 無關。這個分類是為了要算出這三張 PPT 的類別，所產生的一個獨特的分類。」\n\n**這推翻了我原本的框法。** 我把管理員 Excel 的 `AA.測試環境` 跟 CIA 清冊的「環境別」當成「兩個來源在講同一件事」，還做了一個「不一致」旗標標出 23 台要人判斷——那 23 台**不是問題，是我製造的假問題**：兩者本來就不是同一件事，沒有理由要一致。我把「名字看起來像」當成「意思一樣」了。\n\n已做的改動：\n  1. `report_groups.json` 補齊 Excel 有而白名單沒有的 7 種分類，共 26 種（核心交易 14／非核心 11／測試 1）\n  2. 新增第三個 group「測試」；`system_overview()` 的測試桶從 `if env == \"測試\"` 改成 `if group_of.get(cat) == \"測試\"`，下鑽同步改（天條：加總與下鑽必須走同一份計算）\n  3. 移除 `TEST_CATEGORY_HINT` 與 classify_rows/summary 的 `inconsistent` 旗標，分類頁的「不一致」頁籤一併拿掉\n  4. 分類頁的「環境別」欄改標示為「（參考）」——留著是因為人工判斷時有用，但它不是判定依據\n  5. 新增測試 `test_測試桶看分類不看CIA清冊的環境別`，**兩個方向都釘**（環境別測試+分類核心→算核心；環境別正式+分類測試→算測試），只釘一邊的話條件寫反了測試照樣會過\n\n⚠️ 新增 6 個分類的 group 是**推論**（來源表字母編號 A~M＝核心交易、N 之後＝非核心，既有 19 個全部符合這個規律）。若管理員說法不同，改 `report_groups.json` 即可。\n\n⚠️ 待辦：那 452 台管理員 Excel 沒涵蓋的仍需人工分類。另外 `docs/系統盤點(全環境)Data.xlsx` 的 2288 台種子匯入尚未執行。"
+    },
+    {
+      "id": "SEC1",
+      "question": "跟資安承諾的盤查腳本控管條件是什麼？我們現在做得到嗎？",
+      "choice": "三條風險控管措施已對資安承諾（見 note）。目前 2 條做到、1 條有缺口、2 項需與資安對齊定義",
+      "status": "decided",
+      "note": "2026-08-27 使用者提供，這是**已經跟資安開出去的條件**，不是內部想法。使用者原話：「我跟資安開的條件，我們要做得到」。\n\n## 提案背景（給不熟的人看）\n現有 WhatsUp Gold／vCenter／OPManager 只做主機效能、可用性與事件告警，**無法提供**軟體資產盤點、帳號生命週期（最後登入時間、密碼異動時間）、系統服務關聯拓樸。為符合**櫃買中心缺失改善**、資產管理與帳號治理需求，需要唯讀盤查腳本定期蒐集。\n\n## 承諾的三條控管措施\n1. 盤查帳號採 **AD 納管**，並依**最小權限原則**配置\n2. **Linux**：SSH 存取控制、禁止 Root 直接登入、盤查帳號禁止人工登入\n   **Windows**：AD 帳號納管、GPO 限制登入權限、禁止本機與 RDP 人工登入\n3. 腳本**統一集中管理**，保留**程式異動紀錄**與**執行日誌**，以利稽核\n\n## 現況對照（2026-08-27 查程式碼得到的，逐條標等級）\n\n**最小權限──【證據】做到了。** onboard_engine.build_linux_script：\n  · sudoers 只給一條 `NOPASSWD: /usr/bin/cat /sys/class/dmi/id/*`（只為讀機型序號，那個檔 0400 只有 root 讀得到）\n  · authorized_keys 帶 `from=\"<收集端IP>\"` 限制來源，並關掉 agent／port／X11 forwarding\n  · AIX 版**完全不佈 sudoers**（序號走 uname，一般帳號就讀得到）\n\n**SSH 存取控制──【證據】做到了**（同上的 from= 來源限制）。\n\n**AD 納管──【缺口，做不到】。** 目前是 `useradd` 建**本機帳號** `webit3scan`（AIX 是 `webit3sc`，因為 max_logname 預設只有 8 字元）。**不是 AD 帳號。** Windows 端 winrm_collector 收 username/password 參數，帳號來源看設定，程式本身沒有強制 AD。\n→ 這條要嘛改實作（Linux 走 SSSD/realmd 加入網域），要嘛回頭跟資安修正條件。**不可以當成已經做到。**\n\n**禁止 Root 直接登入──【未驗證】。** 那是目標主機的 sshd_config （PermitRootLogin），不是我們的腳本管的，我們也不該去改別人的 sshd。要確認的是「公司主機是否已統一設定」，那是主機管理端的事。\n\n**盤查帳號禁止人工登入──【需與資安對齊定義】。** 現在 `passwd -l` 鎖密碼（AIX 是 `chuser account_locked=true`），所以**密碼登入不可能**；但 shell 是 /bin/bash 且有 authorized_keys，**金鑰登入是可行的**（那正是收集本身要用的路徑）。\n如果資安要的是 `-s /sbin/nologin`，那收集就完全不能執行指令，功能會失效。→ **要把「禁止人工登入」的定義講清楚**：我方的控制是「無密碼 + 金鑰限定來源 IP + 禁止各種 forwarding」。\n\n**腳本統一集中管理──【證據】做到了。** 腳本不是散落的檔案，是`onboard_engine.build_linux_script()` / `build_aix_script()` **即時產生**，來源只有一份、在 git 裡。\n\n**程式異動紀錄──【證據】做到了。** git history；且 pre-commit 關卡（.project/hooks + checks.py）擋住不符規範的 commit。\n\n**執行日誌──【部分做到】。** 已有 scan_runs／service_collect_runs／account_collect_runs／collect_dispatch_run／ci_graph_runs／onboard_audit／credential_use_audit／activity_log（2026-08-26 新增，記誰在何時改了什麼）。**但「每次盤查在目標主機上實際執行了哪些指令」目前沒有逐條留存**——稽核若問「你到底在我的機器上跑了什麼」，現在答不出完整清單。\n→ 這是最可能被稽核追問的一項，值得補。\n\n⚠️ **這條決策的用途是防止我們自己說謊。** 對外承諾了三條，內部就要能逐條指出證據或缺口。「幾分證據說幾分話」在這裡不是風格問題，是對資安的誠信問題。"
+    },
+    {
+      "id": "SEC2",
+      "question": "SEC1 的兩個缺口要怎麼補？（AD 納管、盤查指令的執行日誌）",
+      "choice": "",
+      "status": "open",
+      "note": "2026-08-27 開立，**等使用者決定優先序**。SEC1 查出兩個不能宣稱做到的項目：\n\n**① AD 納管（缺口）**\n現在是本機帳號 `webit3scan`。要做到承諾有兩條路：\n  A. Linux 主機加入 AD 網域（SSSD/realmd），收集改用網域帳號\n     → 影響面大，要主機管理端配合，且 AIX 的 AD 整合另有做法\n  B. 回頭跟資安修正條件，說明「專用本機帳號 + 無密碼 + 金鑰限來源 IP +      最小 sudo 白名單」的控制強度，改以這個為承諾\n  ⚠️ 不論走哪條，**現在都不可以對外說已經做到 AD 納管**。\n\n**② 盤查指令的執行日誌（部分）**\n現在有各種 *_runs 表記「跑了一輪、成功幾台」，但沒有逐條記「在哪台、用什麼身分、執行了哪一行指令、回傳什麼」。\n稽核最可能問的就是這個。建議做法：收集端在送出每一條遠端指令時寫一筆，**只記指令與結果摘要、不記回傳的完整內容**（那裡面是主機清單與帳號資料，複製一份等於多開一個外洩面——跟 activity_log 不記 request body 是同一個道理）。\n\n另有兩項**未驗證**，不是我們能單方面做到的，要主機管理端確認：\n  · 目標主機 sshd 是否已統一 PermitRootLogin no\n  · Windows 是否已用 GPO 限制盤查帳號的登入權限\n\n還有一項**要跟資安對齊定義**：「盤查帳號禁止人工登入」——我方目前是「無密碼 + 金鑰限定來源 IP」，不是 nologin shell（設成 nologin 收集就無法執行指令）。"
+    },
+    {
+      "id": "SEC3",
+      "date": "2026-08-28",
+      "title": "納管腳本一律走 stdin 送純文字，不做 base64／不落地 TEMP／不用 ExecutionPolicy Bypass",
+      "decision": "onboard_engine 三個平台（Linux `sudo bash -s`／AIX `ksh -s`／Windows `powershell -NoProfile -NonInteractive -Command -`）都改成把腳本從 stdin 餵進去。api.py 產給人貼的指令改成 heredoc 純文字；Windows 直接貼腳本本文。SSH 一律用 `StrictHostKeyChecking=accept-new` ＋ 明確的 UserKnownHostsFile（onboard_engine.SSH_HOSTKEY_OPTS，全專案唯一一份）。",
+      "why": "使用者原話：「我要說過要注意不能踩到資安 SOC，例如 windows 不能用 bypass」。舊做法是 T1027 混淆 ＋ T1059.001 ＋ T1562.001 削弱防禦的組合，也就是勒索軟體投放的標準動作。單台跑或許沒人注意，但這支就是拿來**大量納管**的——一個上午對幾百台連續執行，EDR/SOC 看到的畫面會是橫向移動加惡意程式投放，而觸發的帳號持有全機隊金鑰。純文字三贏：貼的人看得懂、稽核查得到、SOC 不告警。`StrictHostKeyChecking=no` 則是實質缺失不只是外觀——等於自願接受中間人攻擊。選 accept-new 而不是 yes：第一次接觸幾百台新主機時不會卡住，但任何一台金鑰之後被換掉就會擋下來。",
+      "guard": "tests/asset_module/test_agent_scripts_security.py::test_不得出現_SOC_告警樣式（釘住整個 APP/ 樹，已用突變測試驗過會紅）"
+    },
+    {
+      "id": "SEC4",
+      "date": "2026-08-28",
+      "title": "root 永遠不執行來路可控的程式碼——push agent 投放目錄離開 /tmp，且只收資料",
+      "decision": "投放目錄 `/tmp/webit3_agent_*` → `/var/lib/webit3-agent/incoming`（0730 root:sysinfra）。`push_agent.sh` 改成隨 bootstrap 固定佈署在 /opt/webit3-agent/bin/，install.sh 從那裡複製；投放目錄出現任何 .sh 一律拒絕整個任務並要求人工查看。兩個資料檔逐一驗（非 symlink／普通檔／大小上限／agent_key 只收 base64url 16-128 字元／collector_url 只收 http(s)）。掃描前先確認投放目錄本身是 root:730，不是就整輪拒絕。bootstrap_watcher.sh 改由 build_bootstrap.py 產生，不再手動同步內嵌區塊。api.py 兩支端點不再交出 push_agent.sh／install.sh。",
+      "why": "這是**真的本機提權漏洞**，不是外觀問題。/tmp 全域可寫，任何本機帳號都能建`/tmp/webit3_agent_x/` 塞自己的 push_agent.sh ＋ .ready，隔天 root 排程就會幫他裝進 /opt 755 並排進 sysinfra 的 crontab——而 sysinfra 持有全機隊 SSH 金鑰，等於一個本機低權帳號直接變成橫向移動跳板。不需要任何漏洞利用技巧。使用者的 CLAUDE.md 早就寫著這條歷史教訓，這次是真的把它修掉。bootstrap 改成產生是因為：同一段程式碼存在兩份時，只改正本沒改內嵌版的話，git diff 看起來已經修好，實際佈到主機上的還是有漏洞的舊版——「看起來修好、實際沒修」比沒修更危險。",
+      "guard": "tests/asset_module/test_agent_scripts_security.py（6 個守門測試，全部用突變測試驗過會紅）"
+    }
+  ],
+  "doc_scan_ignore": [
+    "AI/交接摘要",
+    ".project/decisions.json",
+    "AI/工作模式"
+  ]
+}

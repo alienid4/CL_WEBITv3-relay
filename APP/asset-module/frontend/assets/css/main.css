@@ -1,0 +1,113 @@
+/* 全站視覺規範：示範白綠（CL_WEBIT），2026-08-24 使用者拍板。
+   取代 2026-08-22 那版「借 CL_Patch 配色」的白底（#009142 / #f4f6fa）——白底方向不變，
+   是白底底下的色票、圓角、陰影、字級改用這份正式規範。變數名一律不動
+   （--brand/--card/--ink…），所以每一頁不必改程式碼就跟著換色。
+
+   ⚠️ 這一節是**唯一的顏色來源**。任何頁面都不該再自己發明顏色——要用色就從這裡取變數。
+   字體：數字/英文 Space Grotesk（vendored 本地，公司環境擋 Google Fonts）、中文系統字。 */
+@import './fonts.css';
+
+:root, :root[data-theme='light'], :root[data-theme='dark'] {
+  --paper: #eef1f0;               /* 頁面底色 */
+  --card: #ffffff;                /* 卡片／表格底 */
+  --card-solid: #ffffff;
+  --sub: #fafbfa;                 /* 次層底：展開列、註解區 */
+  --sidebar: #ffffff;
+  --sidebar-active-bg: rgba(0,128,106,.08);
+  --sidebar-active-text: #00806a;
+  --sidebar-text: #3f504b;
+  --topbar: #ffffff;
+  --mint: rgba(0,128,106,.08);
+  --mint-deep: rgba(0,128,106,.14);
+  --ink: #16211e;                 /* 主文字 */
+  --ink-soft: #1f2b28;            /* 次文字 */
+  --ink-aux: #3f504b;             /* 輔助文字 */
+  --muted: #5f6f6a;               /* 說明／標籤小字——最淺，不可再淺（WCAG AA） */
+  --border: #e2e8e6;
+  --line: #edf0ef;                /* 表格分隔線，比邊框更淺 */
+  --border-strong: #dde3e1;
+  --brand: #00806a;               /* 重點色：關鍵數字、作用中、主按鈕、連結 */
+  --brand-hover: #00a389;         /* 規範指定的 hover 亮版：只用在「底色」，不用在文字 */
+  /* ⚠️ --brand-dark 全站有 20+ 處是拿來當**文字顏色**用的（麵包屑、區塊標、代碼字）。
+     一度把它設成 hover 亮綠 #00a389，結果那些字在 #eef1f0 上只有 2.8:1，直接違反
+     『所有文字對比 ≥4.5:1』。所以它必須是比 --brand 更深的綠，hover 亮版另開變數。 */
+  --brand-dark: #00654f;
+  --link: #00654f;                /* 連結是文字：用深綠版，#00806a 對頁面底只有 4.3:1 */
+  --good: #00806a;  --good-soft: rgba(0,128,106,.08);
+  --warn: #b06a00;  --warn-soft: rgba(176,106,0,.06);
+  /* 規範的注意色 #b06a00 當**文字**時對白底只有 4.28:1，過不了規範自己訂的 ≥4.5:1
+     （§7 驗收）。所以色票本身不動（狀態燈、填色、底色照用 --warn），只有文字改用
+     這個加深版：白底 5.38:1、頁面底 4.73:1，兩邊都過。 */
+  --warn-text: #9a5c00;
+  --bad: #c0392b;   --bad-soft: rgba(192,57,43,.06);
+  --radius: 16px;
+  --shadow: 0 1px 2px rgba(16,40,34,.04);
+  --maxw: 1600px;                 /* 內容最大寬，置中 */
+  --disp: 'Space Grotesk', 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+
+  /* 多分類圖表專用色階（DonutChart／業務系統分類這類「純識別、非語意」的分色）。
+     跟 --brand/--warn/--bad 不同——那些有固定意義（正常/注意/異常），這些只是
+     拿來讓 3~8 個並列類別看起來不一樣，唯一顏色來源仍是這裡，頁面不准自己發明 hex。
+     2026-08-25 部門報告圖表頁新增。 */
+  --chart-1: #00806a; --chart-2: #2563eb; --chart-3: #d97706;
+  --chart-4: #7c3aed; --chart-5: #0891b2; --chart-6: #dc2626;
+  --chart-gray: #9aa39f;   /* 未分類／無資料 */
+}
+
+* { box-sizing: border-box; }
+html, body, #__nuxt { height: 100%; }
+body {
+  margin: 0; color: var(--ink);
+  font-family: 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif;
+  line-height: 1.6; -webkit-font-smoothing: antialiased;
+  background: var(--paper);
+}
+body::before {          /* 46px 細網格：白底上只是極淡的質地，不搶內容 */
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0; opacity: .05;
+  background-image: linear-gradient(rgba(0,90,74,.9) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(0,90,74,.9) 1px, transparent 1px);
+  background-size: 46px 46px;
+}
+#__nuxt { position: relative; z-index: 1; }
+/* 數字一律等寬對齊——欄位沒對齊的數字很難掃 */
+.mono, .num { font-family: var(--disp); font-variant-numeric: tabular-nums; }
+
+/* ===== 全域元件：讓每頁 scoped 的 .card/table/input 都吃到同一套規範 ===== */
+.card {
+  background: var(--card) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: var(--shadow) !important;
+}
+.card-title { color: var(--muted) !important; letter-spacing: .5px; }
+
+/* 表格：無外框線，只用細分隔線分列；數字右對齊由各頁自己標 .num */
+table { border-collapse: collapse; }
+th { background: var(--sub) !important; color: var(--muted) !important;
+  border-color: var(--line) !important; font-weight: 600; }
+td { border-color: var(--line) !important; }
+tbody tr:hover td, tr:hover td { background: var(--sub) !important; }
+
+input, select, textarea {
+  background: #ffffff !important;
+  border: 1px solid var(--border-strong) !important;
+  color: var(--ink) !important;
+  border-radius: 8px !important;
+  transition: border-color .15s, box-shadow .15s;
+}
+input::placeholder, textarea::placeholder { color: var(--muted); }
+input:focus, select:focus, textarea:focus {
+  outline: none; border-color: var(--brand) !important;
+  box-shadow: 0 0 0 3px rgba(0,128,106,.14) !important;
+}
+select option { background: #ffffff; color: var(--ink); }
+
+button, .btn { border-radius: 10px; transition: background .15s, border-color .15s, color .15s, transform .05s; }
+button:active, .btn:active { transform: translateY(.5px); }
+
+a { color: var(--link); }
+::selection { background: rgba(0,128,106,.16); }
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb { background: #cfd8d5; border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: #b7c3bf; }
+::-webkit-scrollbar-track { background: transparent; }
