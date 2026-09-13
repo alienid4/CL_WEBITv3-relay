@@ -1,0 +1,15 @@
+{
+  "max_rounds": 20,
+  "max_minutes": 60,
+  "max_fails_per_slice": 3,
+  "agent_timeout_minutes": 15,
+  "protect_branches": ["main", "master"],
+  "plan_cmd": "",
+  "exec_cmd": "",
+  "review_cmd": "",
+  "agent_cmd": "",
+  "agent_prompt_via": "stdin",
+  "tripwire_paths": [".env", ".env.*", "migrations/", "*.pem", "*.key"],
+  "max_deleted_files": 5,
+  "max_refills": 1
+}
