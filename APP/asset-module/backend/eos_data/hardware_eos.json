@@ -1,0 +1,443 @@
+[
+  {
+    "name": "Cisco Catalyst 9300 series switch",
+    "eos_kind": "End of Life (尚未公告)",
+    "eos_date": null,
+    "source_url": null,
+    "extendable": false,
+    "note": "Cisco官方9300系列EOL公告列表顯示硬體本身目前仍在售，尚無End-of-Sale/End-of-Life公告；現有公告只涵蓋IOS XE各版本、SSD-120G等軟體/周邊項目。",
+    "confidence": "no_official_date"
+  },
+  {
+    "name": "Cisco Catalyst 9200 series switch",
+    "eos_kind": "End of Life (尚未公告)",
+    "eos_date": null,
+    "source_url": null,
+    "extendable": false,
+    "note": "同 9300 系列情況，硬體本身尚無EOL公告、目前仍在售。",
+    "confidence": "no_official_date"
+  },
+  {
+    "name": "Cisco Catalyst 2960-X series switch",
+    "eos_kind": "End of Support (Last Date of Support)",
+    "eos_date": "2027-10-31",
+    "source_url": "https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-2960-x-series-switches/eos-eol-notice-c51-744432.html",
+    "extendable": false,
+    "note": "官方公告(EOL13603)：HW End-of-Sale 2022-10-31。無官方付費延長支援選項。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Cisco Catalyst 3850 series switch",
+    "eos_kind": "End of Support (Last Date of Support)",
+    "eos_date": "2025-10-31",
+    "source_url": "https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-3850-series-switches/eos-eol-notice-c51-743072.html",
+    "extendable": false,
+    "note": "官方公告(EOL13188)：HW End-of-Sale 2020-10-30。無官方付費延長支援選項。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Cisco Catalyst 2960 Plus series switch",
+    "eos_kind": "End of Support (Last Date of Support)",
+    "eos_date": "2026-10-31",
+    "source_url": "https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-2960-plus-series-switches/eos-eol-notice-c51-744423.html",
+    "extendable": false,
+    "note": "官方公告(EOL13612，正式產品名 Cisco Catalyst C2960+ Series)：HW End-of-Sale 2021-10-31。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Cisco Nexus 9300 series switch",
+    "eos_kind": "End of Support (Last Date of Support) — 依子型號而異",
+    "eos_date": "2029-07-31",
+    "source_url": "https://www.cisco.com/c/en/us/products/collateral/switches/nexus-9000-series-switches/nexus-c93180yc-fx-c93108tc-fx-fixed-switches-eol.html",
+    "extendable": false,
+    "note": "9300系列橫跨多世代子型號(93128TX/9396TX/93180YC-EX/93180YC-FX等)，各自獨立公告、日期橫跨2017-2025年。此填FX世代(N9K-C93180YC-FX/93108TC-FX，較常見)代表值。實際盤點請對照面板PID到 https://www.cisco.com/c/en/us/products/switches/nexus-9000-series-switches/eos-eol-notice-listing.html 。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Cisco Nexus 3548 switch",
+    "eos_kind": "End of Support",
+    "eos_date": "2021-10-31",
+    "source_url": "https://www.cisco.com/c/en_in/obsolete/switches/cisco-nexus-3548-switch.html",
+    "extendable": false,
+    "note": "原始3548型號(非3548-X/3548-XL)，End-of-Sale 2016-10-07。若為3548-X/3548-XL變體，EOL時程不同，需另查證。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Cisco ISR 4451-X router",
+    "eos_kind": "End of Support (Last Date of Support - HW)",
+    "eos_date": "2028-11-30",
+    "source_url": "https://www.cisco.com/c/en/us/products/collateral/routers/4000-series-integrated-services-routers-isr/select-isr4k-series-platform-eol.html",
+    "extendable": false,
+    "note": "官方公告(EOL14896)含ISR4451-X/K9及其bundle SKU。End-of-Sale(HW) 2023-11-07。無公開付費延長支援方案。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Cisco ASA 5512-X firewall",
+    "eos_kind": "End of Support (Last Date of Support - HW)",
+    "eos_date": "2022-08-31",
+    "source_url": "https://www.cisco.com/c/en/us/products/collateral/security/asa-5500-series-next-generation-firewalls/eos-eol-notice-c51-738644.html",
+    "extendable": false,
+    "note": "官方公告(EOL12141，2019-04-01更新)。已過期。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Cisco ASA 5525-X firewall",
+    "eos_kind": "End of Support (Last Date of Support - HW)",
+    "eos_date": "2025-09-30",
+    "source_url": "https://www.cisco.com/c/en/us/products/collateral/security/asa-firepower-services/eos-eol-notice-c51-743545.html",
+    "extendable": false,
+    "note": "官方公告(EOL13130，2022-06-28更新，屬「ASA5525/5545/5555 Series Security Appliance & 5YR Subscriptions」)。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Cisco ASA 5506-X firewall",
+    "eos_kind": "End of Support (Last Date of Support - HW)",
+    "eos_date": "2026-08-31",
+    "source_url": "https://www.cisco.com/c/en/us/products/collateral/security/asa-5500-series-next-generation-firewalls/eos-eol-notice-c51-744797.html",
+    "extendable": false,
+    "note": "官方公告(EOL13763，2021-02-01更新)。查詢當下(2026-08-11)尚未過期。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Cisco 2900 series router (2901/2921/2951)",
+    "eos_kind": "End of Support (Last Date of Support - HW)",
+    "eos_date": "2022-12-31",
+    "source_url": "https://www.cisco.com/c/en/us/products/collateral/routers/2900-series-integrated-services-routers-isr/eos-eol-notice-c51-737831.html",
+    "extendable": false,
+    "note": "官方公告(EOL11158)以整個2900系列(2901/2911/2921/2951)單一公告涵蓋，非逐型號分開。End-of-Sale=2017-12-09。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Cisco 1900 series router (1921/1941)",
+    "eos_kind": "End of Support (Last Date of Support - HW)",
+    "eos_date": "2023-09-30",
+    "source_url": "https://www.cisco.com/c/en/us/products/collateral/routers/1900-series-integrated-services-routers-isr/eos-eol-notice-c51-740520.html",
+    "extendable": false,
+    "note": "⚠️ 型號更正：1841實際屬於Cisco 1800系列(ISR G1)不是1900系列，1921才是1900系列(ISR G2，與1941同一份公告)。此筆只涵蓋1921/1941。1841的官方EOL公告頁已被Cisco下架，查無官方來源，若盤點資產是1841請視為「查無官方公告」。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Cisco APIC (ACI) appliance",
+    "eos_kind": "End of Support (Last Date of Support - HW) — 依世代而異",
+    "eos_date": "2028-10-31",
+    "source_url": "https://www.cisco.com/c/en/us/products/collateral/cloud-systems-management/application-policy-infrastructure-controller-apic/apic-m3-l3-se-node-g2-eol.html",
+    "extendable": false,
+    "note": "APIC硬體依世代各自公告，差異大：L1/M1(2016最舊)、L2/M2(2020)、M3/L3+SE-NODE-G2(此欄採用，EOS(HW)=2023-10-30)、M6(2026-07才公告，最新)。請依實際硬體世代對應調整。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Dell PowerEdge R640 server",
+    "eos_kind": "End of Support / End of Life",
+    "eos_date": null,
+    "source_url": null,
+    "extendable": false,
+    "note": "Dell官方未針對機架伺服器機型公開發布統一EOL/EOSL日期，是依「服務標籤」逐台查個別保固到期日(一般5-7年)，非公開的機型統一公告。",
+    "confidence": "no_official_date"
+  },
+  {
+    "name": "Dell PowerEdge R740 server",
+    "eos_kind": "End of Support / End of Life",
+    "eos_date": null,
+    "source_url": null,
+    "extendable": false,
+    "note": "同R640，Dell未公開發布機型層級EOL日期，需服務標籤逐台查詢。",
+    "confidence": "no_official_date"
+  },
+  {
+    "name": "Dell PowerEdge R750 server",
+    "eos_kind": "End of Support / End of Life",
+    "eos_date": null,
+    "source_url": null,
+    "extendable": false,
+    "note": "同R640，Dell未公開發布機型層級EOL日期，需服務標籤逐台查詢。",
+    "confidence": "no_official_date"
+  },
+  {
+    "name": "Dell PowerEdge R760 server",
+    "eos_kind": "End of Support / End of Life",
+    "eos_date": null,
+    "source_url": null,
+    "extendable": false,
+    "note": "2023年發表的第16代機型，目前仍在銷售/主流支援階段，查無明訂EOL日期。",
+    "confidence": "no_official_date"
+  },
+  {
+    "name": "Dell PowerEdge R660 server",
+    "eos_kind": "End of Support / End of Life",
+    "eos_date": null,
+    "source_url": null,
+    "extendable": false,
+    "note": "2023年3月發表的第16代機型，目前仍在銷售/主流支援階段，查無明訂EOL日期。",
+    "confidence": "no_official_date"
+  },
+  {
+    "name": "Dell PowerEdge R6525 server",
+    "eos_kind": "End of Support / End of Life",
+    "eos_date": null,
+    "source_url": null,
+    "extendable": false,
+    "note": "同R640，Dell未公開發布機型層級EOL日期，需服務標籤逐台查詢。",
+    "confidence": "no_official_date"
+  },
+  {
+    "name": "HPE ProLiant DL360 Gen7 server",
+    "eos_kind": "End of Support Life (EOSL)",
+    "eos_date": null,
+    "source_url": null,
+    "extendable": false,
+    "note": "官方EOL/EOSL頁需登入或為JS互動頁，本次工具無法確認頁面文字。第三方彙整站(未驗證)標示EOS約2013-04、EOSL約2018-04，僅供參考不採用。",
+    "confidence": "no_official_date"
+  },
+  {
+    "name": "HPE ProLiant DL360 Gen10 server",
+    "eos_kind": "End of Life (EOL)",
+    "eos_date": "2024-11",
+    "source_url": "https://www.hpe.com/psnow/doc/a50011772enw",
+    "extendable": true,
+    "note": "HPE官方文件《Extend the lifecycle of your HPE ProLiant Gen10 and Gen10 Plus Servers》表列EOL為2024年11月(僅列月份)。此為EOL(停產)非明確EOSL(支援終止)日期。PDF是Adobe嵌入渲染，工具多次逾時無法確認日期真的寫在裡面，第三方站雖一致引用此日期但非直接核實，故列不確定。",
+    "confidence": "unverified"
+  },
+  {
+    "name": "HPE ProLiant DL380 Gen10 server",
+    "eos_kind": "End of Life (EOL)",
+    "eos_date": "2024-11",
+    "source_url": "https://www.hpe.com/psnow/doc/a50011772enw",
+    "extendable": true,
+    "note": "同DL360 Gen10，同一份官方文件，同樣未能實際核對頁面原文（連線多次逾時）。",
+    "confidence": "unverified"
+  },
+  {
+    "name": "Lenovo System x3550 M5 server",
+    "eos_kind": "End of Service (EOS)",
+    "eos_date": null,
+    "source_url": null,
+    "extendable": false,
+    "note": "Lenovo官方確認已下市、不再受理訂購，但精確EOS日期在互動查詢工具上，該工具本身聲明「規劃中EOS日期未公開張貼」，無法取得。",
+    "confidence": "no_official_date"
+  },
+  {
+    "name": "Lenovo System x3650 M5 server",
+    "eos_kind": "End of Service (EOS)",
+    "eos_date": null,
+    "source_url": null,
+    "extendable": false,
+    "note": "同x3550 M5，已下市但精確EOS日期無法從官方互動工具取得。",
+    "confidence": "no_official_date"
+  },
+  {
+    "name": "IBM System x3550 M3/M4 server",
+    "eos_kind": "Hardware Withdrawal / End of Service",
+    "eos_date": null,
+    "source_url": null,
+    "extendable": false,
+    "note": "IBM官方公告系統對自動化存取一律403，多次嘗試皆無法開啟確認頁面內容。M3/M4為不同世代，第三方(未驗證)標示M3約2013-06下市、M4 EOSL約2021-12，不採用。",
+    "confidence": "no_official_date"
+  },
+  {
+    "name": "IBM System x3650 M4/M5 server",
+    "eos_kind": "Hardware Withdrawal / End of Service",
+    "eos_date": null,
+    "source_url": null,
+    "extendable": false,
+    "note": "同x3550項，ibm.com對自動化存取403，無法確認精確日期。M5為Lenovo接手後機型，世代不同。",
+    "confidence": "no_official_date"
+  },
+  {
+    "name": "IBM Power S922 server",
+    "eos_kind": "End of Support (Transition to End of Support Services)",
+    "eos_date": "2026-01-31",
+    "source_url": "https://www.ibm.com/support/pages/node/7093104",
+    "extendable": false,
+    "note": "機型9009-22A(GA 2018-03-20)，公告字號AD25-0134，建議替代機型9009-42G。若是9009-22G(另一子機型)，官方尚未列出日期。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "IBM Power S1024 server",
+    "eos_kind": "End of Support",
+    "eos_date": null,
+    "source_url": "https://www.ibm.com/support/pages/node/7094490",
+    "extendable": false,
+    "note": "機型9105-42A，GA 2022-07-22，目前仍在Warranty狀態、現行銷售機種，官方尚未列出下市或EOS日期。",
+    "confidence": "no_official_date"
+  },
+  {
+    "name": "IBM FlashSystem 5100 storage",
+    "eos_kind": "End of Support (Transition to End of Support Services)",
+    "eos_date": "2026-12-31",
+    "source_url": "https://www.ibm.com/support/pages/node/7092508",
+    "extendable": false,
+    "note": "以NVMe Control Enclosure機型2077-4H4為準(GA 2020-03-06)，公告字號AD25-1133，建議替代機型4662-7H2。其他子型號(SFF/LFF/擴充櫃)需另查對應頁面。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "IBM Storwize V5000 storage",
+    "eos_kind": "End of Support (Transition to End of Support Services)",
+    "eos_date": "2025-12-31",
+    "source_url": "https://www.ibm.com/support/pages/node/7093408",
+    "extendable": false,
+    "note": "以2078-92F(GA 2016-12-09)為代表值，公告字號AD24-0701，建議替代機型4662-92G。V5000家族還有多種子型號，實際EOS可能不同。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "IBM Power 7042-CR6 (Power 750/770 era)",
+    "eos_kind": "End of Support (Transition to End of Support Services)",
+    "eos_date": "2022-12-31",
+    "source_url": "https://www.ibm.com/support/pages/node/7094195",
+    "extendable": false,
+    "note": "7042-CR6為Hardware Management Console(HMC)機型，非Power 750/770主機本體，常搭配使用。GA 2010-09-17。網頁被ibm.com 403擋下無法重新核對，日期取自研究階段搜尋結果。",
+    "confidence": "unverified"
+  },
+  {
+    "name": "IBM Power 7063-CR1/CR2 (Power10 S1022/S1024)",
+    "eos_kind": "End of Support (Transition to End of Support Services)",
+    "eos_date": "2026-12-31",
+    "source_url": "https://www.ibm.com/support/pages/node/7094366",
+    "extendable": false,
+    "note": "7063-CR1(GA 2017-09-15，此欄日期)為HMC機型非伺服器本體，建議替代機型7063-CR2(GA 2021-05-21，仍在保固中、官方尚未公布EOS)。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Fortinet FortiGate 100D firewall",
+    "eos_kind": "End of Support",
+    "eos_date": "2023-07-26",
+    "source_url": "https://support.fortinet.com/welcome/#/lifecycle",
+    "extendable": false,
+    "note": "查自Fortinet官方Product Life Cycle入口(免登入)。基本型號FG100D。變體日期不同：100D-G EOS=2022-08-29、100D-LENC EOS=2025-01-14。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Fortinet FortiGate 101E firewall",
+    "eos_kind": "End of Support",
+    "eos_date": "2026-07-15",
+    "source_url": "https://support.fortinet.com/welcome/#/lifecycle",
+    "extendable": false,
+    "note": "⚠️ 101F是不同世代、EOS完全不同：101F的EOS是2031-04-16(晚很多)。若盤點資產是101F，改用2031-04-16，不可套用此日期。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Fortinet FortiGate 200D firewall",
+    "eos_kind": "End of Support",
+    "eos_date": "2023-05-22",
+    "source_url": "https://support.fortinet.com/welcome/#/lifecycle",
+    "extendable": false,
+    "note": "「200/201系列」橫跨D/E/F三世代，各自公告不同EOS：200D-POE=2023-07-15；200E/201E=2030-10-13；201F=2031-03-01。此欄僅代表最舊的200D，未能重新開啟頁面核對（JS動態表格）。",
+    "confidence": "unverified"
+  },
+  {
+    "name": "Fortinet FortiGate 300C firewall",
+    "eos_kind": "End of Support",
+    "eos_date": "2021-08-20",
+    "source_url": "https://support.fortinet.com/welcome/#/lifecycle",
+    "extendable": false,
+    "note": "301E是不同世代，EOS是2026-07-15，不可套用此日期給301E。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Fortinet FortiGate 61E firewall",
+    "eos_kind": "End of Support",
+    "eos_date": "2026-07-15",
+    "source_url": "https://support.fortinet.com/welcome/#/lifecycle",
+    "extendable": false,
+    "note": "60F與61F（基本款，非Rugged/WiFi變體）在官方資料庫查無記錄，代表尚未公告EOS、仍是現行機種——不可套用61E的日期。未能重新開啟頁面核對（JS動態SPA）。",
+    "confidence": "unverified"
+  },
+  {
+    "name": "Juniper SRX300/SRX340 firewall",
+    "eos_kind": "End of Support",
+    "eos_date": null,
+    "source_url": "https://support.juniper.net/support/eol/product/srx_series/",
+    "extendable": false,
+    "note": "官方SRX Series Hardware Dates & Milestones頁查無SRX300/SRX340主機本體的EOL條目，只有少數配件/軟體訂閱SKU列入。代表Juniper尚未對這兩型號硬體本身發布EOL公告，目前仍是現行機種。",
+    "confidence": "no_official_date"
+  },
+  {
+    "name": "Juniper EX2200 switch",
+    "eos_kind": "End of Support",
+    "eos_date": "2024-06-30",
+    "source_url": "https://support.juniper.net/support/eol/product/ex_series/",
+    "extendable": false,
+    "note": "與EX3300/EX4200/EX4550共用同一份EOL公告，涵蓋EX2200全系列子型號。未能重新開啟頁面核對（JS動態載入）。",
+    "confidence": "unverified"
+  },
+  {
+    "name": "Aruba 2930F switch",
+    "eos_kind": "End of Support Life (EoSL) / End of Sale (EoS)",
+    "eos_date": null,
+    "source_url": null,
+    "extendable": false,
+    "note": "找不到全系列統一的官方EoS/EoSL公告。HPE Aruba員工在官方社群明確表示「2930F switches are still available and EoS hasn't been announced」（僅部分特定SKU如JL724A CM款已於2021-10-31 EoS）。",
+    "confidence": "no_official_date"
+  },
+  {
+    "name": "Aruba 3810M switch",
+    "eos_kind": "End of Support Life (EoSL)",
+    "eos_date": "2028-06-30",
+    "source_url": "https://asp-documents.arubanetworks.com/portals/0/el/EOS_Notice_3810-Switches.pdf",
+    "extendable": false,
+    "note": "官方PDF公告(2022-11-08發布)：End of Sale 2023-06-30。涵蓋JL071A~JL076A/JL428A~JL430A全系列SKU，已直接讀取PDF內容確認。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Aruba 6200F switch",
+    "eos_kind": "End of Support Life (EoSL)",
+    "eos_date": "2032-07-31",
+    "source_url": "https://asp-documents.arubanetworks.com/portals/0/External_EoS%20Announcement_Aruba_6200F_v0.4_September2023.pdf",
+    "extendable": false,
+    "note": "官方PDF公告(2023-09-19發布)：End of Sale 2024-07-31。已直接讀取PDF內容確認。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Aruba 7030 Mobility Controller",
+    "eos_kind": "End of Support Life (EoSL) / End of Sale (EoS)",
+    "eos_date": null,
+    "source_url": null,
+    "extendable": false,
+    "note": "找不到官方公開的專屬EoS/EoSL公告文件。HPE員工在社群論壇提及約2025年1月EoS，但未附官方公告連結，不採用。",
+    "confidence": "no_official_date"
+  },
+  {
+    "name": "F5 BIG-IP i2600/i2800 series appliance",
+    "eos_kind": "End of Sale (EoS) / End of Technical Support (EoTS)",
+    "eos_date": null,
+    "source_url": null,
+    "extendable": false,
+    "note": "官方公告文件確實存在(K000133583，涵蓋整個iSeries，公告日2023-05-01)，但my.f5.com需登入且為JS動態頁，本次無法自動化開啟核實頁面實際日期，故不填入具體日期。建議登入my.f5.com查閱K000133583。",
+    "confidence": "no_official_date"
+  },
+  {
+    "name": "F5 BIG-IP i4800 appliance",
+    "eos_kind": "End of Sale (EoS) / End of Technical Support (EoTS)",
+    "eos_date": null,
+    "source_url": null,
+    "extendable": false,
+    "note": "同i2600/i2800，同一份官方公告K000133583，同樣無法自動化核實。",
+    "confidence": "no_official_date"
+  },
+  {
+    "name": "Dell/EMC Unity XT380/XT480F storage",
+    "eos_kind": "End of Sale (EOL Date) / End of Software Support (EOSS Date)",
+    "eos_date": "2030-07-31",
+    "source_url": "https://www.dell.com/support/kbdoc/en-us/000185734/all-dell-emc-end-of-life-documents",
+    "extendable": false,
+    "note": "來源為Dell官方KB附掛的Excel附件（已下載解析原始試算表資料，非頁面文字，故WebFetch式重驗會顯示「頁面找不到日期」——資料真實存在只是不在HTML本文裡）。EOL Date(停止銷售)=2025-08-01；此欄eos_date採EOSS(最終支援終止)。",
+    "confidence": "confirmed_via_attachment"
+  },
+  {
+    "name": "EMC VPLEX storage",
+    "eos_kind": "End of Sale (EOL Date) / End of Software Support (EOSS Date)",
+    "eos_date": "2027-01-31",
+    "source_url": "https://www.dell.com/support/kbdoc/en-us/000185734/all-dell-emc-end-of-life-documents",
+    "extendable": false,
+    "note": "VPLEX依世代(VS1/VS2/VS6)EOL不同，此欄以較常見的VS2代表：EOSS=2027-01-31。VS6(較新)EOSS=2029-07-31，若盤點對象是VS6請改用該值。同Unity XT，資料來自官方Excel附件原始內容。",
+    "confidence": "confirmed_via_attachment"
+  },
+  {
+    "name": "Palo Alto Networks PA-3260 firewall",
+    "eos_kind": "End of Life (End of Support)",
+    "eos_date": "2028-08-31",
+    "source_url": "https://www.paloaltonetworks.com/services/support/end-of-life-announcements/hardware-end-of-life-dates",
+    "extendable": true,
+    "note": "End-of-Sale 2023-08-31。搭配PAN-OS 11.1：Standard Support至2027-05-03，之後Extended Support到2028-08-31。建議替代機型PA-3400系列。",
+    "confidence": "confirmed"
+  }
+]

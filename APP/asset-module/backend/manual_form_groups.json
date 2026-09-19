@@ -1,0 +1,69 @@
+{
+  "_comment": "手動新增資產表單的欄位分組與排序（2026-08-15 使用者反饋：29 個欄位攤平成一片格子，填的人抓不到重點）。跟 field_groups.json 是兩件事，別混：那份是「資產查詢頁要先顯示哪些欄位」（常用/進階分層），這份是「新增表單怎麼分段排版」。也刻意不塞進 field_mapping.json——那份的 value 是「Excel標題→欄位名」字串，excel_import、匯出表頭、匯入設定頁三處都靠它，改型別會一次打壞三個地方。這裡 key=資料庫欄位名（不是 Excel 標題），所以 field_mapping.json 改標題文字不影響分組。沒列在任何一組的欄位會落到畫面最後的「其他」組，不會消失。順序＝畫面顯示順序，照填表時的思考順序排：先識別這台是什麼、再說它屬於誰、再填機器本身、最後才是要動腦判斷的風險分級。",
+  "groups": [
+    {
+      "key": "identity",
+      "label": "基本識別",
+      "hint": "這台是什麼、目前狀態",
+      "fields": [
+        "asset_serial",
+        "asset_name",
+        "asset_status",
+        "asset_purpose",
+        "group_name",
+        "api_id",
+        "request_no"
+      ]
+    },
+    {
+      "key": "org",
+      "label": "歸屬單位與人",
+      "hint": "誰的、誰在管、誰在用",
+      "fields": [
+        "owning_company",
+        "inventory_division",
+        "inventory_department",
+        "usage_unit",
+        "owner",
+        "custodian",
+        "user_name"
+      ]
+    },
+    {
+      "key": "host",
+      "label": "主機與網路",
+      "hint": "連得到它的資訊",
+      "fields": [
+        "hostname",
+        "ip",
+        "big_ip_vip",
+        "os",
+        "environment"
+      ]
+    },
+    {
+      "key": "hardware",
+      "label": "硬體與位置",
+      "hint": "實體機才填得完整，VM 會少兩欄",
+      "fields": [
+        "device_model",
+        "hardware_no",
+        "physical_location",
+        "rack_no",
+        "quantity",
+        "infra_type"
+      ]
+    },
+    {
+      "key": "risk",
+      "label": "風險分級與備註",
+      "hint": "CIA 三級與補充說明",
+      "fields": [
+        "integrity",
+        "confidentiality",
+        "availability",
+        "remark"
+      ]
+    }
+  ]
+}
