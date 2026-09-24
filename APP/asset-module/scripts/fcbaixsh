@@ -1,0 +1,1156 @@
+#!/usr/bin/ksh
+#=============================================================================
+# FCB AIX 組態檢核（產出格式與 fcbrhelsh 一致，供 DYN 分析）
+#
+# 來源：DATA/AIX檢核表.XLS「AIX組態調整項目」98 條，編號 1:1 對應 FCB-AIX-0001..0098
+# 對照：fcbrhelsh（RHEL，61 條）——欄位、表頭、檔名規則完全相同
+#
+# 這支腳本是**唯讀**的：只用 grep / ls / lssec / lssrc / no -o / ps 等查詢指令，
+# 不寫入任何系統檔、不啟停任何服務、不需要改權限。可重複執行。
+#
+# 重要設計（跟 RHEL 版的差別，都是刻意的）：
+#   1. 檢查結果有四種，不是兩種：Compliant / Non-Compliant / Not-Applicable / Error
+#      「查不到」不等於「合規」。指令失敗、檔案讀不到、權限不足 → 一律 Error，
+#      不可以靜默算成通過，否則報表會把「沒查」講成「沒問題」。
+#   2. 「目前值」一定放**實際觀測到的內容**（ls -l 原文、no -o 輸出、設定行原文），
+#      不是「符合設定」四個字。人要能從這一欄自己複核。
+#   3. 收尾一定有 "Check ended at:" 與 "Check summary:" 兩行。
+#      沒有這兩行 = 腳本中途死掉，那份檔案**不可以當成檢核結果**（防截斷誤判）。
+#   4. 先寫暫存檔、跑完才改名，避免半成品被別人撿走。
+#
+# 【資安說明】被問到時一句話講得清楚的三件事：
+#   不變更：全程唯讀。只用 grep / ls / awk / ps / lssec / lssrc / lsitab / no -o /
+#           showmount / oslevel 等**查詢**指令。不改設定、不啟停服務、不裝任何東西。
+#           唯一寫入的是自己的輸出檔（專屬目錄 0750，檔案 0640）。
+#   不越線：沒有 base64 混淆、沒有下載、沒有 ExecutionPolicy Bypass 之類的手法，
+#           純文字可讀可稽核；不寫世界可寫目錄的固定檔名（避免 symlink 提權）；
+#           不輸出密碼雜湊（只列帳號名），ps 只留三欄避免命令列帶出機敏參數。
+#   不影響效能：無 find / 全碟掃描、無網路掃描；ps -ef 全程只取一次快照；
+#           showmount 只在 /etc/exports 有條目時才呼叫。整支約數秒完成。
+#
+# 用法：  ksh fcbaixsh          （建議用 root 執行；非 root 會有多條 Error）
+# 產出：  /tmp/FCB_<HOSTNAME>_<IP>.txt
+#         /tmp/FCB_<HOSTNAME>_<IP>.html
+#=============================================================================
+
+SCRIPTV="SV.AIX.202609210900"
+
+HOSTNAME=`hostname`
+# AIX 沒有 hostname -I；用 ifconfig 取第一個非 loopback 位址，優先 10.9 網段（比照 RHEL 版）
+ALLIP=`ifconfig -a 2>/dev/null | grep 'inet ' | awk '{print $2}' | grep -v '^127\.' | tr '\n' ' '`
+myIP=`echo "$ALLIP" | tr ' ' '\n' | grep '^10\.9' | head -n 1`
+[ -z "$myIP" ] && myIP=`echo "$ALLIP" | tr ' ' '\n' | grep -v '^$' | head -n 1`
+[ -z "$myIP" ] && myIP="0.0.0.0"
+
+OSLEVEL=`oslevel -s 2>/dev/null`
+[ -z "$OSLEVEL" ] && OSLEVEL=`oslevel 2>/dev/null`
+OSVER="AIX `uname -v`.`uname -r` (oslevel -s: $OSLEVEL)"
+KERNEL="`uname -v`.`uname -r` `bootinfo -K 2>/dev/null`bit"
+
+# 輸出目錄。預設 /var/tmp/fcbaudit（0750），不是世界可寫的 /tmp。
+#   理由：/tmp 任何本機帳號都能寫，用固定檔名等於讓別人先放一個 symlink 指到
+#   /etc/passwd，root 執行這支腳本時就幫他覆寫了系統檔。這是稽核必開的缺失，
+#   不是理論風險。可用環境變數 FCBAIX_OUTDIR 指定其他目錄。
+OUTDIR="${FCBAIX_OUTDIR:-/var/tmp/fcbaudit}"
+if [ ! -d "$OUTDIR" ]; then
+    mkdir -p "$OUTDIR" 2>/dev/null
+    chmod 750 "$OUTDIR" 2>/dev/null
+fi
+if [ ! -d "$OUTDIR" ] || [ ! -w "$OUTDIR" ]; then
+    echo "錯誤：輸出目錄 $OUTDIR 不存在或不可寫。請先由管理者建立："
+    echo "      mkdir -p $OUTDIR && chmod 750 $OUTDIR"
+    echo "      （或設 FCBAIX_OUTDIR 指到可寫的專屬目錄）"
+    exit 1
+fi
+# 目標檔若已存在且是符號連結，一律拒寫——不替別人把 root 權限借出去
+for _t in "FCB_${HOSTNAME}_${myIP}.txt" "FCB_${HOSTNAME}_${myIP}.html" "FCB_${HOSTNAME}_${myIP}.debug.log"; do
+    if [ -h "$OUTDIR/$_t" ]; then
+        echo "錯誤：$OUTDIR/$_t 是符號連結，拒絕寫入（疑似有人預先佈置）。"
+        exit 1
+    fi
+done
+umask 077
+tmp_file="$OUTDIR/.fcb_aix_$$.part"
+output_file="$OUTDIR/FCB_${HOSTNAME}_${myIP}.html"
+flat_txt="$OUTDIR/FCB_${HOSTNAME}_${myIP}.txt"
+
+if [ "`id -u`" -eq 0 ]; then AM_ROOT=1; RUNAS="root"; else AM_ROOT=0; RUNAS="`id -un` (非 root，部分項目無法讀取，會標 Error)"; fi
+
+CAT_SVC="系統服務"
+CAT_SYS="系統設定與維護"
+CAT_SSH="SSH設定"
+CAT_LOG="日誌與稽核"
+CAT_ACC="帳號與存取控制"
+
+N_C=0; N_N=0; N_A=0; N_E=0
+N_SEQ=0
+
+# 行程快照：整支腳本只取一次，避免重複 fork ps（效能），也讓 98 條看到的是同一瞬間
+PS_SNAP=`ps -ef 2>/dev/null`
+
+# 沒有 AIX 測試機（2026-09-21 使用者：公司才有），第一次是盲跑。
+# 所以：console 逐條印進度（截圖就看得出死在哪一條），debug log 留原始輸出。
+dbg_file="$OUTDIR/FCB_${HOSTNAME}_${myIP}.debug.log"
+: > "$dbg_file" 2>/dev/null
+dbg() { echo "$*" >> "$dbg_file" 2>/dev/null; }
+
+# 指令在不在。「指令不存在」必須是 Error，不可以被當成「項目不存在 → 合規」——
+# 2026-09-21 在非 AIX 機器試跑時就是踩到這個：lsitab 不存在，前 4 條全被判成 Compliant。
+# AIX /usr/bin/ksh 是 ksh88：沒有 command -v（用 whence），也不支援 "! cmd" 否定語法。
+# 這兩點只要踩到就是整支 syntax error，在沒有測試機的情況下第一次跑就全滅。
+# whence 是 ksh 內建、command -v 是 POSIX：兩個都試，哪台機器都認得。
+# （只寫 whence 的話在 bash 下會全部報「缺少」——2026-09-21 自己踩到。）
+have() {
+    whence "$1" >/dev/null 2>&1 && return 0
+    command -v "$1" >/dev/null 2>&1 && return 0
+    return 1
+}
+
+# 帶逾時執行一個查詢，回 RT_RC（離開碼；124 = 逾時）與 RT_OUT（標準輸出）。
+#
+# 為什麼需要這個：showmount 走 RPC，對端 nfsd 沒起來或防火牆擋 portmapper 時
+# **會等很久**，而這支腳本要一次掃 8 台正式機。AIX 沒有 GNU 的 timeout 指令，
+# 所以自己看門。
+#
+# ⚠️ 這裡的 kill 砍的是**我們自己 fork 出來的子行程**，不是系統服務——
+# 對目標主機沒有任何變更。暫存檔寫在 $OUTDIR（0750，root 專屬），
+# 不寫 /tmp（world-writable，任何本機帳號都能動手腳）。
+#
+# 用「子行程把離開碼寫進 .rc 檔」來偵測結束，不用 kill -0：
+# ksh 的背景工作結束後會停在 zombie，kill -0 仍然成功，會害看門狗每次都等滿。
+run_timeout() {   # $1=秒數 $2...=要跑的指令
+    _to=$1; shift
+    _tf="$OUTDIR/.rt.$$"
+    rm -f "$_tf" "$_tf.rc" 2>/dev/null
+    ( "$@" > "$_tf" 2>/dev/null; echo $? > "$_tf.rc" ) &
+    _rpid=$!
+    _i=0
+    while [ "$_i" -lt "$_to" ]; do
+        [ -f "$_tf.rc" ] && break
+        sleep 1
+        _i=`expr $_i + 1`
+    done
+    if [ -f "$_tf.rc" ]; then
+        RT_RC=`cat "$_tf.rc" 2>/dev/null`
+        RT_OUT=`cat "$_tf" 2>/dev/null`
+    else
+        kill "$_rpid" 2>/dev/null
+        RT_RC=124
+        RT_OUT=""
+    fi
+    rm -f "$_tf" "$_tf.rc" 2>/dev/null
+}
+
+#-----------------------------------------------------------------------------
+# TWGCB 對應表
+#
+# 【重要】TWGCB（政府組態基準）**沒有發布 AIX 版**（已發布的是 Windows 10/11、
+# Windows Server、RHEL 8/9、Ubuntu、macOS）。所以本檔的 ID 一律是本行自訂的
+# FCB-AIX-xxxx，**絕不可以自己編一個 TWGCB 號碼**——那是造假，稽核一問就破。
+#
+# 能做的是「語意對應」：AIX 這一條，等同於 RHEL TWGCB 的哪一條。
+# 只列**語意確實相同**的，在「標準設定值」欄末加註 (對應 TWGCB-xxx)。
+# 語意只是接近的（例如 AIX minother 涵蓋數字＋符號，RHEL 是分開兩條）標 (近似 ...)，
+# 沒有對應的就不加註——不硬湊。
+#-----------------------------------------------------------------------------
+# CIS Controls v8 控制項。直接照 AIX檢核表.XLS 的「類別」欄搬過來，不是我猜的：
+#   1~85、97 = Secure Configuration of Enterprise Assets and Software（控制項 4）共 86 條
+#   86~96、98 = Account Management（控制項 5）共 12 條
+# 註：檢核表**沒有 CIS Benchmark 的條號欄**（例如 2.3.1），所以這裡只標到控制項，
+#     標不到條號。要補條號需要 CIS IBM AIX 7.2 Benchmark 原文件對照。
+# CIS Benchmark 條號。來源：Tenable 公開的 CIS 認證稽核檔
+# CIS_AIX_7.2_Benchmark_v1.0.0_Level_1（https://www.tenable.com/audits/CIS_AIX_7.2_Benchmark_v1.0.0_Level_1）
+# 對應方式：條目**標題逐字相同**才對，不靠推測。
+# 10 條（mrouted、NFS restrict/secure、NIS markers、hosts.equiv、CDE dtlogin、
+# sshd Match、SNMP 三條 community）未出現在公開的 L1 清單，標「待查」——
+# 那些可能屬 Level 2 或 Manual 項目。依使用者 2026-09-21 指示：
+# 「有編號就先放進去，沒有得先用自訂，之後再補」——所以先給本行自訂序號
+# A-01~A-10（依項次排序，固定不動），拿到 CIS 原文件再換成真條號。
+# **不填猜的 CIS 號碼**，自訂號一眼看得出是自訂的。
+# CIS Benchmark 條號。基準：**CIS IBM AIX 7 Benchmark v1.2.0**（官方 PDF，567 頁）。
+#
+# 2026-09-22 使用者拍板「以 1.2 為主」，所以 v1.2.0 是唯一基準，
+# 畫面上不保留 v1.0.0 舊號——兩個版本的號同時出現，看的人不知道該引用哪個。
+# 舊號只留在 AI/CIS條號對照_v1.0.0_to_v1.2.0.md 當變更紀錄。
+#
+# 對照方法：**用指令名／參數名／檔案路徑當錨點**，不用標題字串比。
+# v1.2.0 把標題全改成 `Ensure ...` 句型（v1.0.0 是 `Disable writesrv`、`pop3`），
+# 直接字串比對會大量落空。每一條都對照過 PDF 目錄的實際標題。
+#
+# 對不到的標本行自訂 A-xx，**不填猜的**。
+cis_id_map() {
+    _n=`echo "$1" | sed 's/FCB-AIX-0*//'`
+    case "$_n" in
+        73) echo " §4.1.1.2" ;;
+        74) echo " §4.1.1.3" ;;
+        75) echo " §4.1.1.4" ;;
+        76) echo " §4.1.1.5" ;;
+        77) echo " §4.1.1.8" ;;
+        78) echo " §4.1.1.9" ;;
+        79) echo " §4.1.1.12" ;;
+        80) echo " §4.1.1.14" ;;
+        81) echo " §4.1.1.15" ;;
+        82) echo " §4.1.1.16" ;;
+        70|72) echo " §4.1.2.4" ;;
+        71) echo " §4.1.2.8" ;;
+        51) echo " §4.2.3" ;;
+        52) echo " §4.2.4" ;;
+        56) echo " §4.2.5" ;;
+        64|65|66) echo " §4.2.7" ;;
+        1) echo " §4.3.1.1" ;;
+        2) echo " §4.3.1.2" ;;
+        3) echo " §4.3.1.5" ;;
+        5) echo " §4.3.2.2" ;;
+        6) echo " §4.3.2.3" ;;
+        7) echo " §4.3.2.4" ;;
+        8) echo " §4.3.2.5" ;;
+        9) echo " §4.3.2.7" ;;
+        10) echo " §4.3.2.8" ;;
+        11) echo " §4.3.2.10" ;;
+        12) echo " §4.3.2.11" ;;
+        13|67) echo " §4.3.2.12" ;;
+        14) echo " §4.3.2.13" ;;
+        15) echo " §4.3.3.1" ;;
+        16) echo " §4.3.3.2" ;;
+        17) echo " §4.3.3.3" ;;
+        23) echo " §4.3.4.2" ;;
+        24) echo " §4.3.4.3" ;;
+        25) echo " §4.3.4.5" ;;
+        26) echo " §4.3.4.6" ;;
+        27) echo " §4.3.4.7" ;;
+        28) echo " §4.3.4.8" ;;
+        29) echo " §4.3.4.10" ;;
+        30) echo " §4.3.4.11" ;;
+        31) echo " §4.3.4.12" ;;
+        32) echo " §4.3.4.13" ;;
+        34) echo " §4.3.4.14" ;;
+        35) echo " §4.3.4.16" ;;
+        36) echo " §4.3.4.17" ;;
+        37) echo " §4.3.4.18" ;;
+        33) echo " §4.3.4.19" ;;
+        38) echo " §4.3.4.20" ;;
+        39) echo " §4.3.4.21" ;;
+        40) echo " §4.3.4.23" ;;
+        41) echo " §4.3.4.24" ;;
+        42) echo " §4.3.4.26" ;;
+        43) echo " §4.3.4.31" ;;
+        18) echo " §4.4.1.3" ;;
+        19) echo " §4.4.1.4" ;;
+        20) echo " §4.4.1.5" ;;
+        21) echo " §4.4.1.6" ;;
+        22) echo " §4.4.1.7" ;;
+        44) echo " §4.5.2" ;;
+        45) echo " §4.5.4" ;;
+        46) echo " §4.5.5" ;;
+        47) echo " §4.5.6" ;;
+        50) echo " §4.5.7" ;;
+        48) echo " §4.5.11" ;;
+        49) echo " §4.5.15" ;;
+        53) echo " §4.6.1.3" ;;
+        54) echo " §4.6.3.1" ;;
+        55) echo " §4.6.3.2" ;;
+        60) echo " §4.6.3.4" ;;
+        62) echo " §4.6.3.6" ;;
+        97) echo " §4.6.3.8" ;;
+        61) echo " §4.6.3.9" ;;
+        58) echo " §4.6.3.10" ;;
+        63) echo " §4.6.3.11" ;;
+        59) echo " §4.6.3.12" ;;
+        57) echo " §4.6.3.13" ;;
+        68) echo " §4.7.1" ;;
+        69) echo " §4.7.3" ;;
+        83) echo " §4.8.4" ;;
+        84) echo " §4.8.5" ;;
+        85) echo " §4.8.6" ;;
+        87) echo " §5.1.1" ;;
+        88) echo " §5.1.3" ;;
+        90) echo " §5.1.6" ;;
+        86) echo " §5.2.2" ;;
+        89) echo " §5.2.4" ;;
+        96) echo " §5.2.5" ;;
+        95) echo " §5.2.6" ;;
+        98) echo " §5.2.7" ;;
+        91) echo " §5.2.9" ;;
+        92) echo " §5.2.11" ;;
+        93) echo " §5.2.12" ;;
+        94) echo " §5.2.13" ;;
+        4) echo " §本行自訂 A-01（v1.2.0 查無對應）" ;;
+        *) echo "" ;;
+    esac
+}
+
+cis_map() {
+    _n=`echo "$1" | sed 's/FCB-AIX-0*//'`
+    case "$_n" in
+        86|87|88|89|90|91|92|93|94|95|96|98) echo " [Controls v8 #5 帳號管理]" ;;
+        *) echo " [Controls v8 #4 安全組態]" ;;
+    esac
+}
+
+twgcb_map() {
+    case "$1" in
+        FCB-AIX-0013) echo " (對應 FCB-01-002-0006 不能安裝sendmail套件)" ;;
+        FCB-AIX-0057) echo " (對應 TWGCB-01-012-0270 SSH PermitEmptyPasswords參數)" ;;
+        FCB-AIX-0059) echo " (對應 TWGCB-01-012-0266 SSH MaxAuthTries參數)" ;;
+        FCB-AIX-0067) echo " (對應 FCB-01-002-0006 不能安裝sendmail套件)" ;;
+        FCB-AIX-0068) echo " (近似 FCB-01-002-0020 登入警語；RHEL 該條為 GNOME GUI)" ;;
+        FCB-AIX-0069) echo " (對應 TWGCB-01-012-0218 登入失敗鎖定次數)" ;;
+        FCB-AIX-0070) echo " (對應 TWGCB-01-012-0139 稽核日誌目錄所有權)" ;;
+        FCB-AIX-0072) echo " (對應 TWGCB-01-008-0140 稽核日誌目錄權限)" ;;
+        FCB-AIX-0079) echo " (近似 TWGCB-01-012-0138 稽核日誌檔案權限)" ;;
+        FCB-AIX-0080|FCB-AIX-0081|FCB-AIX-0082) echo " (近似 TWGCB-01-012-0138 稽核日誌檔案權限)" ;;
+        FCB-AIX-0085) echo " (近似 FCB-01-002-0020 登入警語；RHEL 該條為 GNOME GUI)" ;;
+        FCB-AIX-0086) echo " (對應 TWGCB-01-012-0223 密碼最短使用期限)" ;;
+        FCB-AIX-0087) echo " (對應 TWGCB-01-012-0072 帳號不使用空白密碼)" ;;
+        FCB-AIX-0088) echo " (對應 TWGCB-01-012-0088 唯一的GID)" ;;
+        FCB-AIX-0091) echo " (對應 TWGCB-01-012-0208 密碼最小長度)" ;;
+        FCB-AIX-0092) echo " (近似 TWGCB-01-012-0211/0212 大小寫字母個數；AIX 不分大小寫)" ;;
+        FCB-AIX-0093) echo " (近似 TWGCB-01-012-0210/0213 數字與特殊字元個數；AIX minother 兩者合計)" ;;
+        FCB-AIX-0094) echo " (對應 TWGCB-01-012-0216 相同字元可連續使用個數)" ;;
+        FCB-AIX-0095) echo " (對應 FCB-01-002-0026 密碼最長使用期限)" ;;
+        FCB-AIX-0097) echo " (對應 TWGCB-01-012-0267 SSH IgnoreRhosts參數)" ;;
+        *) echo "" ;;
+    esac
+}
+
+#-----------------------------------------------------------------------------
+# emit <id> <result> <category> <name> <standard> <current>
+#   分號是欄位分隔字元，值裡面的分號一律換成逗號，換行壓成空白
+#-----------------------------------------------------------------------------
+emit() {
+    _cur=`echo "$6" | tr '\012' ' ' | tr ';' ',' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//'`
+    [ -z "$_cur" ] && _cur="(無輸出)"
+    _std=`echo "$5" | tr ';' ','`" [CIS AIX 7 v1.2.0"`cis_id_map "$1"`"]"`cis_map "$1"``twgcb_map "$1"`
+    _nam=`echo "$4" | tr ';' ','`
+    echo "$1;$2;$3;$_nam;$_std;$_cur" >> "$tmp_file"
+    N_SEQ=`expr $N_SEQ + 1`
+    echo "[$N_SEQ/98] $1 $2 - $_nam"
+    dbg "[$N_SEQ] $1 result=$2 name=$_nam"
+    dbg "        std=$_std"
+    dbg "        cur=$_cur"
+    case "$2" in
+        Compliant)      N_C=`expr $N_C + 1` ;;
+        Non-Compliant)  N_N=`expr $N_N + 1` ;;
+        Not-Applicable) N_A=`expr $N_A + 1` ;;
+        *)              N_E=`expr $N_E + 1` ;;
+    esac
+}
+
+#-----------------------------------------------------------------------------
+# 共用檢查函式
+#-----------------------------------------------------------------------------
+
+# /etc/inittab 項目應為 off 或不存在
+ck_inittab() {   # $1=id $2=顯示名稱 $3=inittab ident $4=備註(可省略)
+    _std="/etc/inittab 的 $3 啟動設定；開機自啟的服務越少，可攻擊面越小，( $3 為 off 或不存在 )"
+    [ -n "$4" ] && _std="$_std　$4"
+    if have lsitab; then :; else
+        emit "$1" "Error" "$CAT_SVC" "$2" "$_std" "此機器無 lsitab 指令（非 AIX？）——未查，不可視為合規"
+        return
+    fi
+    _l=`lsitab "$3" 2>/dev/null`
+    if [ -z "$_l" ]; then
+        emit "$1" "Compliant" "$CAT_SVC" "$2" "$_std" "inittab 無 $3 項目"
+    else
+        _act=`echo "$_l" | cut -f3 -d:`
+        if [ "$_act" = "off" ]; then
+            emit "$1" "Compliant" "$CAT_SVC" "$2" "$_std" "已停用: $_l"
+        else
+            emit "$1" "Non-Compliant" "$CAT_SVC" "$2" "$_std" "$_l"
+        fi
+    fi
+}
+
+# /etc/rc.tcpip 的 start 行需註解，且行程不得在跑
+# ——「設定關了」跟「現在沒在跑」是兩件事，兩個都要查（只查一個會誤判）
+ck_rctcpip() {   # $1=id $2=顯示名稱 $3=daemon 檔名 $4=ps 比對字串(可省略)
+    _pat="$4"; [ -z "$_pat" ] && _pat="$3"
+    _std="/etc/rc.tcpip 的 $3 啟動設定；只關設定沒關行程等於沒關，( start 行已註解且行程未執行 )"
+    if [ ! -f /etc/rc.tcpip ]; then
+        emit "$1" "Error" "$CAT_SVC" "$2" "$_std" "讀不到 /etc/rc.tcpip"
+        return
+    fi
+    _live=`grep -E "^[ 	]*start[ 	]+[^ 	]*/$3([ 	]|$)" /etc/rc.tcpip 2>/dev/null | head -n 1`
+    _cmt=`grep -E "^[ 	]*#[ 	]*start[ 	]+[^ 	]*/$3([ 	]|$)" /etc/rc.tcpip 2>/dev/null | head -n 1`
+    # ps -ef 全機只跑一次（下面 PS_SNAP 快取）。AIX LPAR 上行程數可能上萬，
+    # 13 個項目各 fork 一次 ps 是沒必要的負擔。
+    _run=`echo "$PS_SNAP" | grep -v grep | grep -w "$_pat" | head -n 1`
+    # 只留「使用者 PID 指令名」三欄——ps 的完整命令列可能夾帶密碼參數，不可落進報表
+    [ -n "$_run" ] && _run=`echo "$_run" | awk '{print $1, $2, $8}'`
+    if [ -n "$_live" ]; then
+        emit "$1" "Non-Compliant" "$CAT_SVC" "$2" "$_std" "rc.tcpip 仍會啟動: $_live"
+    elif [ -n "$_run" ]; then
+        emit "$1" "Non-Compliant" "$CAT_SVC" "$2" "$_std" "rc.tcpip 已註解但行程仍在執行: $_run"
+    elif [ -n "$_cmt" ]; then
+        emit "$1" "Compliant" "$CAT_SVC" "$2" "$_std" "已註解: $_cmt"
+    else
+        emit "$1" "Compliant" "$CAT_SVC" "$2" "$_std" "rc.tcpip 無 $3 項目，行程亦未執行"
+    fi
+}
+
+# /etc/inetd.conf 服務需註解或移除
+# ⚠️ 2026-09-23 自我稽核 A4：這支原本跟 ck_rctcpip **兩套標準**——
+#   設定檔不存在：ck_rctcpip 判 Error，這裡判 Compliant
+#   行程檢查：    ck_rctcpip 有查，這裡完全沒查
+# 而 ck_rctcpip 的註解白紙黑字寫著「只關設定沒關行程等於沒關」。
+# 同一份腳本兩套標準，改成一套（三態分清楚）：
+#   設定檔不存在 -> Not-Applicable（**這是觀察到的事實，不是觀察失敗**，所以不是 Error）
+#   存在但讀不到 -> Error（這才叫沒查到）
+#   其餘        -> 比對設定，**而且一定要查行程**
+ck_inetd() {     # $1=id $2=顯示名稱 $3=服務名
+    _std="/etc/inetd.conf 的 $3 服務；明文老服務，開著就是一個未加密入口，( $3 已註解或移除 )"
+    if [ ! -f /etc/inetd.conf ]; then
+        emit "$1" "Not-Applicable" "$CAT_SVC" "$2" "$_std" "/etc/inetd.conf 不存在，這台沒有 inetd 服務可設定"
+        return
+    fi
+    if [ ! -r /etc/inetd.conf ]; then
+        emit "$1" "Error" "$CAT_SVC" "$2" "$_std" "/etc/inetd.conf 存在但讀不到（權限不足）——未查，不可視為合規"
+        return
+    fi
+    # 行程：inetd 起的服務多半是**隨連線產生的短命行程**，所以
+    #   掃到  -> 確定在跑（強證據）-> Non-Compliant，不管設定檔怎麼寫
+    #   掃不到 -> 只代表這一瞬間沒有連線（弱證據）-> 不能拿來當合規依據
+    # 比對的是指令名那一欄的開頭（telnet -> telnetd、ftp -> ftpd），不比整條命令列：
+    # 完整命令列可能夾帶密碼參數，不可落進報表（同 ck_rctcpip）。
+    # 用 awk -v 把樣式傳進去，不要在 awk 程式裡插 shell 變數：
+    # 巢狀引號（反引號裡再套單引號雙引號）在 ksh88 很容易解析成別的東西，
+    # 而這支腳本沒有測試機，第一次跑就是正式機。
+    # 取第 8 欄（ps -ef 的指令欄）不是 $NF——$NF 是**最後一個參數**，不是指令名。
+    _ipat="^$3"'d?$'
+    _rp=`echo "$PS_SNAP" | grep -v grep | awk -v pat="$_ipat" '{n=split($8,p,"/"); c=p[n]; if (c ~ pat) print $1, $2, c}' | head -n 1`
+    _l=`grep -E "^[ 	]*$3[ 	]" /etc/inetd.conf 2>/dev/null | head -n 1`
+    if [ -n "$_l" ]; then
+        emit "$1" "Non-Compliant" "$CAT_SVC" "$2" "$_std" "inetd.conf 仍啟用: $_l"
+    elif [ -n "$_rp" ]; then
+        emit "$1" "Non-Compliant" "$CAT_SVC" "$2" "$_std" "inetd.conf 已關但行程仍在執行: $_rp"
+    else
+        _c=`grep -E "^[ 	]*#[ 	]*$3[ 	]" /etc/inetd.conf 2>/dev/null | head -n 1`
+        if [ -n "$_c" ]; then
+            emit "$1" "Compliant" "$CAT_SVC" "$2" "$_std" "已註解: $_c（行程未執行；註：inetd 服務隨連線啟動，此刻掃不到不等於永遠沒有）"
+        else
+            emit "$1" "Compliant" "$CAT_SVC" "$2" "$_std" "inetd.conf 無 $3 項目（行程未執行）"
+        fi
+    fi
+}
+
+# 網路參數 no -o <tunable> 需等於期望值
+ck_no() {        # $1=id $2=顯示名稱 $3=tunable $4=期望值 $5=這個參數在管什麼
+    _why="$5"; [ -z "$_why" ] && _why="避免主機被利用於網路攻擊"
+    _std="網路參數 $3；$_why，( $3 = $4 )"
+    if have no; then :; else
+        emit "$1" "Error" "$CAT_SYS" "$2" "$_std" "此機器無 no 指令（非 AIX？）——未查，不可視為合規"
+        return
+    fi
+    _o=`no -o "$3" 2>/dev/null`
+    if [ -z "$_o" ]; then
+        emit "$1" "Error" "$CAT_SYS" "$2" "$_std" "no -o $3 無輸出（受限參數需 root，或此版本無此參數）"
+        return
+    fi
+    _v=`echo "$_o" | sed 's/.*= *//' | sed 's/ *$//'`
+    if [ "$_v" = "$4" ]; then
+        emit "$1" "Compliant" "$CAT_SYS" "$2" "$_std" "$_o"
+    else
+        emit "$1" "Non-Compliant" "$CAT_SYS" "$2" "$_std" "$_o"
+    fi
+}
+
+# 檔案/目錄 權限 + 擁有者 + 群組
+# 說明欄的寫法照行內既有慣例（使用者 2026-09-21 貼的 RHEL 實例）：
+#   「<完整句子>，( <建議值> )」，目前值則是「無異常: ( <實際值> )」。
+# 不要自己發明分隔符——三個平台共用同一個慣例，解析器才能一套通吃。
+ck_perm() {      # $1=id $2=類別 $3=顯示名稱 $4=路徑 $5=期望權限 $6=owner $7=group $8=用途
+    _why="$8"; [ -z "$_why" ] && _why="避免未經授權者讀取或竄改"
+    _std="$4 的權限與所有權；$_why，( $5 $6:$7 )"
+    if [ ! -e "$4" ]; then
+        emit "$1" "Not-Applicable" "$2" "$3" "$_std" "檔案不存在: $4"
+        return
+    fi
+    _l=`ls -ld "$4" 2>/dev/null`
+    if [ -z "$_l" ]; then
+        emit "$1" "Error" "$2" "$3" "$_std" "ls -ld 讀不到 $4"
+        return
+    fi
+    _p=`echo "$_l" | awk '{print $1}' | cut -c1-10`
+    _o=`echo "$_l" | awk '{print $3}'`
+    _g=`echo "$_l" | awk '{print $4}'`
+    if [ "$_p" = "$5" ] && [ "$_o" = "$6" ] && [ "$_g" = "$7" ]; then
+        emit "$1" "Compliant" "$2" "$3" "$_std" "$_l"
+    else
+        emit "$1" "Non-Compliant" "$2" "$3" "$_std" "$_l"
+    fi
+}
+
+# sshd_config / ssh_config 關鍵字
+ck_sshd() {      # $1=id $2=顯示名稱 $3=關鍵字 $4=期望值(egrep pattern) $5=標準描述
+    _f=/etc/ssh/sshd_config
+    if [ ! -f "$_f" ]; then
+        emit "$1" "Error" "$CAT_SSH" "$2" "$5" "讀不到 $_f"
+        return
+    fi
+    _l=`grep -Ei "^[ 	]*$3[ 	]" "$_f" 2>/dev/null | tail -n 1`
+    if [ -z "$_l" ]; then
+        emit "$1" "Non-Compliant" "$CAT_SSH" "$2" "$5" "sshd_config 未明示 $3（吃預設值，未明示即視為不合規）"
+        return
+    fi
+    _v=`echo "$_l" | awk '{print $2}'`
+    if echo "$_v" | grep -Eiq "$4"; then
+        emit "$1" "Compliant" "$CAT_SSH" "$2" "$5" "$_l"
+    else
+        emit "$1" "Non-Compliant" "$CAT_SSH" "$2" "$5" "$_l"
+    fi
+}
+
+# lssec 取值並與期望比較（$5: eq / le / ge）
+ck_sec() {       # $1=id $2=顯示名稱 $3="檔案 節 屬性" $4=期望值 $5=比較方式 $6=標準描述
+    set -- "$1" "$2" "$3" "$4" "$5" "$6"
+    _id=$1; _nm=$2; _spec=$3; _exp=$4; _op=$5; _std=$6
+    _f=`echo "$_spec" | awk '{print $1}'`
+    _s=`echo "$_spec" | awk '{print $2}'`
+    _a=`echo "$_spec" | awk '{print $3}'`
+    if have lssec; then :; else
+        emit "$_id" "Error" "$CAT_ACC" "$_nm" "$_std" "此機器無 lssec 指令（非 AIX？）——未查，不可視為合規"
+        return
+    fi
+    _o=`lssec -f "$_f" -s "$_s" -a "$_a" 2>/dev/null | tail -n 1`
+    if [ -z "$_o" ]; then
+        emit "$_id" "Error" "$CAT_ACC" "$_nm" "$_std" "lssec -f $_f -s $_s -a $_a 無輸出（需 root 或屬性不存在）"
+        return
+    fi
+    _v=`echo "$_o" | sed 's/.*=//' | tr -d '"' | sed 's/ *//g'`
+    if [ -z "$_v" ]; then
+        emit "$_id" "Non-Compliant" "$CAT_ACC" "$_nm" "$_std" "$_o （值為空，未設定）"
+        return
+    fi
+    _ok=0
+    case "$_op" in
+        eq) [ "$_v" = "$_exp" ] && _ok=1 ;;
+        le) echo "$_v" | grep -Eq '^[0-9]+$' && [ "$_v" -le "$_exp" ] && _ok=1 ;;
+        ge) echo "$_v" | grep -Eq '^[0-9]+$' && [ "$_v" -ge "$_exp" ] && _ok=1 ;;
+    esac
+    if [ "$_ok" -eq 1 ]; then
+        emit "$_id" "Compliant" "$CAT_ACC" "$_nm" "$_std" "$_o"
+    else
+        emit "$_id" "Non-Compliant" "$CAT_ACC" "$_nm" "$_std" "$_o"
+    fi
+}
+
+#=============================================================================
+# 表頭（欄位與順序跟 fcbrhelsh 完全一致；"Check stated at" 的拼字沿用 RHEL 版，
+#      不要「順手改成 started」——DYN 那邊是照字串比對的）
+#=============================================================================
+: > "$tmp_file"
+echo "系統組態檢查"                                     >> "$tmp_file"
+echo "平台: AIX"                                        >> "$tmp_file"
+echo "主機名: $HOSTNAME"                                >> "$tmp_file"
+echo "IP地址: $myIP"                                    >> "$tmp_file"
+echo "作業系統版本: $OSVER"                             >> "$tmp_file"
+echo "核心版本: $KERNEL"                                >> "$tmp_file"
+echo "腳本版本: $SCRIPTV"                               >> "$tmp_file"
+echo "檢核基準: CIS IBM AIX 7 Benchmark v1.2.0（本行 AIX檢核表 98 條；條號已對照 97 條，1 條 v1.2.0 查無對應、暫用本行自訂）。TWGCB 未發布 AIX 版，故 ID 為本行自訂 FCB-AIX-xxxx" >> "$tmp_file"
+echo "Check stated at: `date '+%Y-%m-%d %H:%M:%S'`"     >> "$tmp_file"
+echo "Check runas: $RUNAS"                              >> "$tmp_file"
+if [ "`uname -s`" != "AIX" ]; then
+    echo "Check warning: 本機 uname -s = `uname -s`，不是 AIX。AIX 專屬指令無法執行的項目一律標 Error，這份結果不可當成正式檢核。" >> "$tmp_file"
+fi
+echo "TWGCB-ID;檢查結果;類別;原則設定名稱;標準設定值;目前值" >> "$tmp_file"
+
+#=============================================================================
+# 環境自檢——第一次在公司 AIX 盲跑時，這一段的畫面／LOG 就是診斷依據
+#=============================================================================
+echo "=============================================================="
+echo " FCB AIX 組態檢核  $SCRIPTV"
+echo " 主機: $HOSTNAME   IP: $myIP"
+echo " uname -s: `uname -s`   oslevel -s: $OSLEVEL"
+echo " 執行身分: $RUNAS"
+echo " shell: $0   \$KSH_VERSION=${KSH_VERSION:-(未設定，可能是 ksh88)}"
+echo "-------------------------------------------------------------- "
+echo " 指令自檢（缺哪個，對應項目就會是 Error）:"
+for _c in lsitab lssrc lssec no showmount lsfs bootinfo oslevel ifconfig ssh awk sed grep; do
+    if have "$_c"; then _st="OK  "; else _st="缺少"; fi
+    echo "   [$_st] $_c"
+    dbg "HAVE $_c = $_st"
+done
+echo "-------------------------------------------------------------- "
+echo " 關鍵檔案:"
+for _f in /etc/inittab /etc/rc.tcpip /etc/inetd.conf /etc/exports /etc/ssh/sshd_config /etc/security/user /etc/security/login.cfg /etc/security/passwd; do
+    if [ -r "$_f" ]; then _st="可讀"; elif [ -e "$_f" ]; then _st="不可讀"; else _st="不存在"; fi
+    echo "   [$_st] $_f"
+    dbg "FILE $_f = $_st"
+done
+echo "=============================================================="
+echo ""
+
+#=============================================================================
+# 1-4　inittab 啟動項
+#=============================================================================
+ck_inittab "FCB-AIX-0001" "Disable writesrv"  "writesrv"
+ck_inittab "FCB-AIX-0002" "dt"                "dt"
+ck_inittab "FCB-AIX-0003" "rc.nfs"            "rcnfs"
+ck_inittab "FCB-AIX-0004" "cas_agent"         "cas_agent"
+
+#=============================================================================
+# 5-17　rc.tcpip 常駐服務
+#=============================================================================
+ck_rctcpip "FCB-AIX-0005" "dhcpcd"      "dhcpcd"
+ck_rctcpip "FCB-AIX-0006" "dhcprd"      "dhcprd"
+ck_rctcpip "FCB-AIX-0007" "dhcpsd"      "dhcpsd"
+ck_rctcpip "FCB-AIX-0008" "gated"       "gated"
+ck_rctcpip "FCB-AIX-0009" "mrouted"     "mrouted"
+ck_rctcpip "FCB-AIX-0010" "named"       "named"
+ck_rctcpip "FCB-AIX-0011" "routed"      "routed"
+ck_rctcpip "FCB-AIX-0012" "rwhod"       "rwhod"
+ck_rctcpip "FCB-AIX-0013" "sendmail"    "sendmail"
+ck_rctcpip "FCB-AIX-0014" "timed"       "timed"
+ck_rctcpip "FCB-AIX-0015" "autoconf6"   "autoconf6"
+ck_rctcpip "FCB-AIX-0016" "ndpd-host"   "ndpd-host"
+ck_rctcpip "FCB-AIX-0017" "ndpd-router" "ndpd-router"
+
+#=============================================================================
+# 18-22　NFS
+#   先判「這台到底有沒有在用 NFS」——沒在用就是 Not-Applicable，
+#   不可以因為「沒設定」就算合規（那是兩件事）
+#=============================================================================
+NFS_EXPORTS_N=0
+[ -f /etc/exports ] && NFS_EXPORTS_N=`grep -vE '^[ 	]*(#|$)' /etc/exports 2>/dev/null | wc -l | tr -d ' '`
+if have lsfs; then
+    NFS_MOUNTS=`lsfs -v nfs 2>/dev/null | grep -v '^Name' | grep -v '^$'`
+    NFS_PROBE_OK=1
+else
+    NFS_MOUNTS=""
+    NFS_PROBE_OK=0
+fi
+
+_std18="NFS 掛載選項；沒有 nosuid 就能從 NFS 上跑 setuid 程式提權，( 掛載帶 nosuid 與 nodev )"
+if [ "$NFS_PROBE_OK" -eq 0 ]; then
+    emit "FCB-AIX-0018" "Error" "$CAT_SVC" "NFS - enable both nosuid and nodev options on NFS client mounts" "$_std18" "此機器無 lsfs 指令（非 AIX？）——未查"
+elif [ -z "$NFS_MOUNTS" ]; then
+    emit "FCB-AIX-0018" "Not-Applicable" "$CAT_SVC" "NFS - enable both nosuid and nodev options on NFS client mounts" "$_std18" "本機無 NFS 掛載"
+else
+    # ⚠️ 2026-09-23 自我稽核 B1：原本只 grep -v 'nosuid'，**完全沒有查 nodev**——
+    # 而條目標題寫的是 "enable both nosuid and nodev"。
+    # 掛載帶了 nosuid、沒有 nodev 的機器會被判合規，報表上看起來查過了，實際只查一半。
+    # 這是金融業，稽核問起來解釋不了就是缺失。
+    _opts=`grep -p nfs /etc/filesystems 2>/dev/null | grep -i 'options'`
+    _bad_su=`echo "$_opts" | grep -v '^$' | grep -v 'nosuid' | head -n 3`
+    _bad_nd=`echo "$_opts" | grep -v '^$' | grep -v 'nodev' | head -n 3`
+    if [ -z "$_opts" ]; then
+        # 有 NFS 掛載（前面判過了）卻讀不到 options，那是沒查到不是沒問題
+        emit "FCB-AIX-0018" "Error" "$CAT_SVC" "NFS - enable both nosuid and nodev options on NFS client mounts" "$_std18" "/etc/filesystems 讀不到 nfs 段的 options 行——未查，不可視為合規"
+    elif [ -n "$_bad_su" ] || [ -n "$_bad_nd" ]; then
+        _miss=""
+        [ -n "$_bad_su" ] && _miss="未帶 nosuid: $_bad_su"
+        [ -n "$_bad_nd" ] && _miss="$_miss 未帶 nodev: $_bad_nd"
+        emit "FCB-AIX-0018" "Non-Compliant" "$CAT_SVC" "NFS - enable both nosuid and nodev options on NFS client mounts" "$_std18" "$_miss"
+    else
+        emit "FCB-AIX-0018" "Compliant" "$CAT_SVC" "NFS - enable both nosuid and nodev options on NFS client mounts" "$_std18" "所有 NFS 掛載皆帶 nosuid 與 nodev"
+    fi
+fi
+
+_std19="NFS 輸出對象；輸出給 localhost 等於讓本機任何帳號繞過權限讀到，( 無 localhost 條目 )"
+if [ "$NFS_EXPORTS_N" -eq 0 ]; then
+    emit "FCB-AIX-0019" "Not-Applicable" "$CAT_SVC" "NFS - localhost removal" "$_std19" "/etc/exports 無有效條目"
+else
+    _l=`grep -iE 'localhost|127\.0\.0\.1' /etc/exports 2>/dev/null | grep -vE '^[ 	]*#' | head -n 2`
+    if [ -n "$_l" ]; then
+        emit "FCB-AIX-0019" "Non-Compliant" "$CAT_SVC" "NFS - localhost removal" "$_std19" "$_l"
+    else
+        emit "FCB-AIX-0019" "Compliant" "$CAT_SVC" "NFS - localhost removal" "$_std19" "/etc/exports 無 localhost 條目（有效條目 $NFS_EXPORTS_N 筆）"
+    fi
+fi
+
+_std20='NFS 輸出範圍；everyone 代表整個網路都掛得上，( showmount -e 無 everyone )'
+if [ "$NFS_EXPORTS_N" -eq 0 ]; then
+    emit "FCB-AIX-0020" "Not-Applicable" "$CAT_SVC" "NFS - restrict NFS access" "$_std20" "本機未輸出任何 NFS 目錄"
+else
+    # ⚠️ 2026-09-23 自我稽核 A1：這是全檔**唯一靠外部服務回應**的檢查。
+    # 原本只擋「指令不存在」，擋不住「指令執行失敗」——showmount 在 nfsd 沒起來、
+    # RPC 不通、防火牆擋 portmapper 時會吐空並回非 0，於是「問不到」被判成 Compliant。
+    # 那跟解析端「跑到一半死掉顯示 100% 合規」是同一個形狀，而且更糟：
+    # 它同時是整支腳本唯一可能卡死的地方。
+    _l=""
+    if have showmount; then :; else
+        emit "FCB-AIX-0020" "Error" "$CAT_SVC" "NFS - restrict NFS access" "$_std20" "此機器無 showmount 指令——未查，不可視為合規"
+        _l="__SKIP__"
+    fi
+    if [ "$_l" != "__SKIP__" ]; then
+        run_timeout 15 showmount -e
+        if [ "$RT_RC" = "124" ]; then
+            emit "FCB-AIX-0020" "Error" "$CAT_SVC" "NFS - restrict NFS access" "$_std20" "showmount -e 15 秒內沒有回應（RPC 不通或 nfsd 未啟動）——未查，不可視為合規"
+            _l="__SKIP__"
+        elif [ "$RT_RC" != "0" ]; then
+            emit "FCB-AIX-0020" "Error" "$CAT_SVC" "NFS - restrict NFS access" "$_std20" "showmount -e 查詢失敗（離開碼 $RT_RC；nfsd 未啟動或 RPC 被擋）——未查，不可視為合規"
+            _l="__SKIP__"
+        else
+            _l=`echo "$RT_OUT" | grep '(everyone)' | head -n 2`
+        fi
+    fi
+    if [ "$_l" = "__SKIP__" ]; then
+        :
+    elif [ -n "$_l" ]; then
+        emit "FCB-AIX-0020" "Non-Compliant" "$CAT_SVC" "NFS - restrict NFS access" "$_std20" "$_l"
+    else
+        emit "FCB-AIX-0020" "Compliant" "$CAT_SVC" "NFS - restrict NFS access" "$_std20" "showmount -e 無 (everyone)"
+    fi
+fi
+
+_std21="NFS root 權限；no_root_squash 讓對方的 root 就是這台的 root，( 無 no_root_squash 與 root= )"
+if [ "$NFS_EXPORTS_N" -eq 0 ]; then
+    emit "FCB-AIX-0021" "Not-Applicable" "$CAT_SVC" "NFS - no_root_squash option" "$_std21" "/etc/exports 無有效條目"
+else
+    _l=`grep -E 'no_root_squash|root=' /etc/exports 2>/dev/null | grep -vE '^[ 	]*#' | head -n 2`
+    if [ -n "$_l" ]; then
+        emit "FCB-AIX-0021" "Non-Compliant" "$CAT_SVC" "NFS - no_root_squash option" "$_std21" "$_l"
+    else
+        emit "FCB-AIX-0021" "Compliant" "$CAT_SVC" "NFS - no_root_squash option" "$_std21" "無 no_root_squash / root= 授權"
+    fi
+fi
+
+_std22="NFS 認證方式；沒指定 sec= 就是誰都能掛，( 每個輸出都有 sec= )"
+if [ "$NFS_EXPORTS_N" -eq 0 ]; then
+    emit "FCB-AIX-0022" "Not-Applicable" "$CAT_SVC" "NFS - secure NFS" "$_std22" "/etc/exports 無有效條目"
+else
+    _l=`grep -vE '^[ 	]*(#|$)' /etc/exports 2>/dev/null | grep -v 'sec=' | head -n 2`
+    if [ -n "$_l" ]; then
+        emit "FCB-AIX-0022" "Non-Compliant" "$CAT_SVC" "NFS - secure NFS" "$_std22" "未指定 sec=: $_l"
+    else
+        emit "FCB-AIX-0022" "Compliant" "$CAT_SVC" "NFS - secure NFS" "$_std22" "所有輸出皆指定 sec="
+    fi
+fi
+
+#=============================================================================
+# 23-43　inetd 服務
+#=============================================================================
+ck_inetd "FCB-AIX-0023" "chargen"  "chargen"
+ck_inetd "FCB-AIX-0024" "comsat"   "comsat"
+ck_inetd "FCB-AIX-0025" "discard"  "discard"
+ck_inetd "FCB-AIX-0026" "echo"     "echo"
+ck_inetd "FCB-AIX-0027" "exec"     "exec"
+ck_inetd "FCB-AIX-0028" "finger"   "finger"
+ck_inetd "FCB-AIX-0029" "imap2"    "imap2"
+ck_inetd "FCB-AIX-0030" "instsrv"  "instsrv"
+ck_inetd "FCB-AIX-0031" "klogin"   "klogin"
+ck_inetd "FCB-AIX-0032" "kshell"   "kshell"
+ck_inetd "FCB-AIX-0033" "login"    "login"
+ck_inetd "FCB-AIX-0034" "netstat"  "netstat"
+ck_inetd "FCB-AIX-0035" "pcnfsd"   "pcnfsd"
+ck_inetd "FCB-AIX-0036" "pop3"     "pop3"
+ck_inetd "FCB-AIX-0037" "rexd"     "rexd"
+ck_inetd "FCB-AIX-0038" "rquotad"  "rquotad"
+ck_inetd "FCB-AIX-0039" "rstatd"   "rstatd"
+ck_inetd "FCB-AIX-0040" "rusersd"  "rusersd"
+ck_inetd "FCB-AIX-0041" "rwalld"   "rwalld"
+ck_inetd "FCB-AIX-0042" "sprayd"   "sprayd"
+ck_inetd "FCB-AIX-0043" "uucp"     "uucp"
+
+#=============================================================================
+# 44-50　網路參數（no）
+#=============================================================================
+ck_no "FCB-AIX-0044" "bcastping"          "bcastping"          "0" "開著會回應廣播 ping，可被拿去放大流量攻擊人"
+ck_no "FCB-AIX-0045" "directed_broadcast" "directed_broadcast" "0" "開著這台會變成 Smurf 攻擊的跳板"
+ck_no "FCB-AIX-0046" "icmpaddressmask"    "icmpaddressmask"    "0" "會洩漏內網怎麼切網段"
+ck_no "FCB-AIX-0047" "ipforwarding"       "ipforwarding"       "0" "開著這台會變路由器，流量繞過網段管制"
+ck_no "FCB-AIX-0048" "ipsrcrouterecv"     "ipsrcrouterecv"     "0" "讓對方自己指定回程路徑，可繞過防火牆"
+ck_no "FCB-AIX-0049" "nonlocsrcroute"     "nonlocsrcroute"     "0" "同上，可繞過網段管制"
+ck_no "FCB-AIX-0050" "ip6forwarding"      "ip6forwarding"      "0" "IPv6 上會變成路由器"
+
+#=============================================================================
+# 51-53　NIS / hosts.equiv / CDE
+#=============================================================================
+_std51='/etc/passwd 與 /etc/group 的 NIS 標記；會把帳號來源交給外部目錄，( 皆無 + 開頭項目 )'
+_l=`grep -l '^+' /etc/passwd /etc/group 2>/dev/null | tr '\n' ' '`
+if [ -n "$_l" ]; then
+    emit "FCB-AIX-0051" "Non-Compliant" "$CAT_SYS" "NIS - remove NIS markers from password and group files" "$_std51" "有 NIS 標記: $_l"
+else
+    emit "FCB-AIX-0051" "Compliant" "$CAT_SYS" "NIS - remove NIS markers from password and group files" "$_std51" 'passwd 與 group 皆無 "+" 標記'
+fi
+
+_std52="/etc/hosts.equiv；列在裡面的主機可免密碼登入，( 不存在或無有效條目 )"
+if [ ! -f /etc/hosts.equiv ]; then
+    emit "FCB-AIX-0052" "Compliant" "$CAT_SYS" "Removal of entries from /etc/hosts.equiv" "$_std52" "/etc/hosts.equiv 不存在"
+else
+    _l=`grep -vE '^[ 	]*(#|$)' /etc/hosts.equiv 2>/dev/null | head -n 3`
+    if [ -n "$_l" ]; then
+        emit "FCB-AIX-0052" "Non-Compliant" "$CAT_SYS" "Removal of entries from /etc/hosts.equiv" "$_std52" "$_l"
+    else
+        emit "FCB-AIX-0052" "Compliant" "$CAT_SYS" "Removal of entries from /etc/hosts.equiv" "$_std52" "檔案存在但無有效條目"
+    fi
+fi
+
+# ⚠️ 項次 2 與項次 53 查的是**同一個 inittab ident（dt）**，結果必然一致。
+# 已對照 DATA/AIX檢核表.XLS「AIX組態調整項目」：客戶的正式檢核表本來就列兩條
+# （項次 2「dt」、項次 53「CDE - disabling dtlogin」），所以照列，不自行合併。
+# 但要在報表上講明——否則合規率的分母裡有一條在重複計算同一個事實，
+# 而看報表的人會以為那是兩個獨立的控制項。
+# **分母要不要調整是客戶的決定，我們的責任是讓他看得出來。**
+ck_inittab "FCB-AIX-0053" "CDE - disabling dtlogin" "dt" \
+    "註：與項次 2（dt）查同一個 inittab ident，結果必然一致；本表依客戶檢核表列為兩項"
+
+#=============================================================================
+# 54-63　OpenSSH
+#=============================================================================
+_std54="OpenSSH 版本；舊版有已知漏洞且缺少現代加密套件，( 8.1 以上 )"
+_sv=`ssh -V 2>&1 | head -n 1`
+if [ -z "$_sv" ]; then
+    emit "FCB-AIX-0054" "Error" "$CAT_SSH" "OpenSSH: Minimum version is 8.1" "$_std54" "ssh -V 無輸出"
+else
+    _maj=`echo "$_sv" | sed 's/^OpenSSH_//' | cut -f1 -d'.'`
+    _min=`echo "$_sv" | sed 's/^OpenSSH_//' | cut -f2 -d'.' | sed 's/[^0-9].*//'`
+    echo "$_maj" | grep -Eq '^[0-9]+$' || _maj=0
+    echo "$_min" | grep -Eq '^[0-9]+$' || _min=0
+    if [ "$_maj" -gt 8 ] || { [ "$_maj" -eq 8 ] && [ "$_min" -ge 1 ]; }; then
+        emit "FCB-AIX-0054" "Compliant" "$CAT_SSH" "OpenSSH: Minimum version is 8.1" "$_std54" "$_sv"
+    else
+        emit "FCB-AIX-0054" "Non-Compliant" "$CAT_SSH" "OpenSSH: Minimum version is 8.1" "$_std54" "$_sv"
+    fi
+fi
+
+_std55="/etc/shosts.equiv 與 /etc/rhosts.equiv；rhosts 型信任等於免密碼登入，( 兩個檔案皆不存在 )"
+_l=""
+[ -e /etc/shosts.equiv ] && _l="$_l /etc/shosts.equiv"
+[ -e /etc/rhosts.equiv ] && _l="$_l /etc/rhosts.equiv"
+if [ -n "$_l" ]; then
+    emit "FCB-AIX-0055" "Non-Compliant" "$CAT_SSH" "OpenSSH: Remove /etc/shosts.equiv and /etc/rhosts.equiv" "$_std55" "仍存在:$_l"
+else
+    emit "FCB-AIX-0055" "Compliant" "$CAT_SSH" "OpenSSH: Remove /etc/shosts.equiv and /etc/rhosts.equiv" "$_std55" "兩個檔案皆不存在"
+fi
+
+_std56="各使用者家目錄的 .shosts；個人層級的免密碼信任最難稽核，( 所有家目錄皆無 .shosts )"
+if [ "$AM_ROOT" -eq 1 ]; then
+    _homes=`awk -F: '$6 ~ /^\// {print $6}' /etc/passwd 2>/dev/null | sort -u`
+    _hit=""
+    for _h in $_homes; do
+        [ -e "$_h/.shosts" ] && _hit="$_hit $_h/.shosts"
+    done
+    if [ -n "$_hit" ]; then
+        emit "FCB-AIX-0056" "Non-Compliant" "$CAT_SSH" "OpenSSH: Remove .shosts files" "$_std56" "仍存在:$_hit"
+    else
+        emit "FCB-AIX-0056" "Compliant" "$CAT_SSH" "OpenSSH: Remove .shosts files" "$_std56" "已檢查 /etc/passwd 所列家目錄，皆無 .shosts"
+    fi
+else
+    emit "FCB-AIX-0056" "Error" "$CAT_SSH" "OpenSSH: Remove .shosts files" "$_std56" "非 root，無法讀取其他使用者家目錄"
+fi
+
+ck_sshd "FCB-AIX-0057" "sshd_config: PermitEmptyPasswords is 'no'" "PermitEmptyPasswords" "^no$"            "SSH PermitEmptyPasswords 參數；允許空密碼等於沒有密碼，( no )"
+ck_sshd "FCB-AIX-0058" "sshd_config: LogLevel is 'INFO' or 'VERBOSE'" "LogLevel"          "^(INFO|VERBOSE)$" "SSH LogLevel 參數；記太少就查不出誰連進來過，( INFO 或 VERBOSE )"
+ck_sshd "FCB-AIX-0059" "sshd_config: MaxAuthTries is '4'" "MaxAuthTries"                  "^[1-4]$"          "SSH MaxAuthTries 參數；次數放寬等於放任人慢慢猜密碼，( 4 以下 )"
+
+_std60='SSH 條件式例外；例外要集中在 Match 區塊才看得出誰被放寬，( 例外寫在 Match 區塊 )'
+if [ -f /etc/ssh/sshd_config ]; then
+    _n=`grep -cE '^[ 	]*Match ' /etc/ssh/sshd_config 2>/dev/null | tr -d ' '`
+    emit "FCB-AIX-0060" "Compliant" "$CAT_SSH" "sshd_config: Use Conditional exception(s)" "$_std60（人工判讀：例外是否經核准）" "Match 區塊數 = $_n"
+else
+    emit "FCB-AIX-0060" "Error" "$CAT_SSH" "sshd_config: Use Conditional exception(s)" "$_std60" "讀不到 /etc/ssh/sshd_config"
+fi
+
+# 61-63：弱演算法一律判不合規；沒設定就是吃編譯預設，同樣標不合規並附實際值
+ck_alg() {      # $1=id $2=名稱 $3=關鍵字 $4=弱演算法 egrep pattern
+    _std="SSH $3 演算法；弱演算法可被降級攻擊或離線破解，( 不含 $4 )"
+    _out=""
+    for _f in /etc/ssh/sshd_config /etc/ssh/ssh_config; do
+        [ -f "$_f" ] || continue
+        _v=`grep -Ei "^[ 	]*$3[ 	]" "$_f" 2>/dev/null | tail -n 1`
+        [ -n "$_v" ] && _out="$_out [$_f] $_v"
+    done
+    if [ -z "$_out" ]; then
+        emit "$1" "Non-Compliant" "$CAT_SSH" "$2" "$_std" "兩個設定檔皆未明示 $3（吃預設值，未明示即視為不合規）"
+    elif echo "$_out" | grep -Eiq "$4"; then
+        emit "$1" "Non-Compliant" "$CAT_SSH" "$2" "$_std" "含弱演算法:$_out"
+    else
+        emit "$1" "Compliant" "$CAT_SSH" "$2" "$_std" "$_out"
+    fi
+}
+ck_alg "FCB-AIX-0061" "sshd_config, ssh_config: KexAlgorithms" "KexAlgorithms" "group1-sha1|group-exchange-sha1|gss-"
+ck_alg "FCB-AIX-0062" "sshd_config, ssh_config: Ciphers"       "Ciphers"       "arcfour|-cbc|3des|blowfish|cast128"
+ck_alg "FCB-AIX-0063" "sshd_config, ssh_config: MACs"          "MACs"          "hmac-md5|hmac-sha1[^-]|hmac-sha1$|96|umac-64[^-]"
+
+#=============================================================================
+# 64-67　SNMP / sendmail
+#=============================================================================
+ck_snmp() {     # $1=id $2=community 名稱
+    _f=/etc/snmpdv3.conf
+    [ -f "$_f" ] || _f=/etc/snmpd.conf
+    _std="SNMP $2 community；預設社群字串等於免密碼讀走網路資訊，( $_f 中無啟用的 $2 )"
+    if [ ! -f "$_f" ]; then
+        emit "$1" "Not-Applicable" "$CAT_SVC" "SNMP - disable $2 community string" "$_std" "本機無 snmpd 設定檔"
+        return
+    fi
+    if [ "$AM_ROOT" -ne 1 ] && [ ! -r "$_f" ]; then
+        emit "$1" "Error" "$CAT_SVC" "SNMP - disable $2 community string" "$_std" "非 root，讀不到 $_f"
+        return
+    fi
+    _l=`grep -iE "^[ 	]*(COMMUNITY|community)[ 	]+$2([ 	]|$)" "$_f" 2>/dev/null | head -n 1`
+    if [ -n "$_l" ]; then
+        emit "$1" "Non-Compliant" "$CAT_SVC" "SNMP - disable $2 community string" "$_std" "$_f: $_l"
+    else
+        emit "$1" "Compliant" "$CAT_SVC" "SNMP - disable $2 community string" "$_std" "$_f 無啟用中的 $2 community"
+    fi
+}
+ck_snmp "FCB-AIX-0064" "private"
+ck_snmp "FCB-AIX-0065" "system"
+ck_snmp "FCB-AIX-0066" "public"
+
+_std67="sendmail 服務狀態；對外郵件服務不該開在一般主機上，( 已停止且不自動啟動 )"
+if have lssrc; then _ls=`lssrc -s sendmail 2>/dev/null | grep -v Subsystem | head -n 1`; else _ls="__NOCMD__"; fi
+if [ "$_ls" = "__NOCMD__" ]; then
+    emit "FCB-AIX-0067" "Error" "$CAT_SVC" "Uninstall/Disable sendmail" "$_std67" "此機器無 lssrc 指令（非 AIX？）——未查"
+elif [ -z "$_ls" ]; then
+    emit "FCB-AIX-0067" "Compliant" "$CAT_SVC" "Uninstall/Disable sendmail" "$_std67" "SRC 無 sendmail 子系統"
+else
+    _st=`echo "$_ls" | awk '{print $NF}'`
+    if [ "$_st" = "active" ]; then
+        emit "FCB-AIX-0067" "Non-Compliant" "$CAT_SVC" "Uninstall/Disable sendmail" "$_std67" "$_ls"
+    else
+        emit "FCB-AIX-0067" "Compliant" "$CAT_SVC" "Uninstall/Disable sendmail" "$_std67" "$_ls"
+    fi
+fi
+
+#=============================================================================
+# 68-69　登入警語 / 登入重試
+#=============================================================================
+_std68="登入警語 herald；法遵要求登入前要告知使用者，( login.cfg default 節有設 herald )"
+if have lssec; then _o=`lssec -f /etc/security/login.cfg -s default -a herald 2>/dev/null | tail -n 1`; else _o=""; fi
+_v=`echo "$_o" | sed 's/.*herald=//' | tr -d '"'`
+if [ -z "$_o" ]; then
+    emit "FCB-AIX-0068" "Error" "$CAT_ACC" "herald (logon message)" "$_std68" "lssec 無輸出或無此指令（需 root／非 AIX）"
+elif [ -z "$_v" ]; then
+    emit "FCB-AIX-0068" "Non-Compliant" "$CAT_ACC" "herald (logon message)" "$_std68" "herald 未設定: $_o"
+else
+    emit "FCB-AIX-0068" "Compliant" "$CAT_ACC" "herald (logon message)" "$_std68" "$_o"
+fi
+
+ck_sec "FCB-AIX-0069" "loginretries" "/etc/security/user default loginretries" "5" "le" \
+       "登入失敗鎖定次數；不鎖定就能無限次嘗試密碼，( 5 以下，本行設 3 )"
+
+#=============================================================================
+# 70　稽核子系統目錄所有權
+#=============================================================================
+_std70="/audit 與 /etc/security/audit 所有權；稽核資料被動過就失去證據力，( root:audit )"
+_r70=""
+_bad70=0
+for _d in /audit /etc/security/audit; do
+    if [ ! -e "$_d" ]; then
+        _r70="$_r70 [$_d 不存在]"
+        continue
+    fi
+    _l=`ls -ld "$_d" 2>/dev/null`
+    _o=`echo "$_l" | awk '{print $3}'`; _g=`echo "$_l" | awk '{print $4}'`
+    _r70="$_r70 $_l"
+    { [ "$_o" = "root" ] && [ "$_g" = "audit" ]; } || _bad70=1
+done
+if [ -z "$_r70" ]; then
+    emit "FCB-AIX-0070" "Error" "$CAT_LOG" "AUDIT subsystem: /audit and /etc/security/audit" "$_std70" "兩個路徑都讀不到"
+elif [ "$_bad70" -eq 1 ]; then
+    emit "FCB-AIX-0070" "Non-Compliant" "$CAT_LOG" "AUDIT subsystem: /audit and /etc/security/audit" "$_std70" "$_r70"
+else
+    emit "FCB-AIX-0070" "Compliant" "$CAT_LOG" "AUDIT subsystem: /audit and /etc/security/audit" "$_std70" "$_r70"
+fi
+
+#=============================================================================
+# 71-82　檔案與目錄權限
+#=============================================================================
+ck_perm "FCB-AIX-0071" "$CAT_SYS" "/var/spool/cron/crontabs" "/var/spool/cron/crontabs" "drwxrwx---" "bin"  "cron" "可寫就能以別人身分排程執行指令"
+ck_perm "FCB-AIX-0072" "$CAT_LOG" "/etc/security/audit"      "/etc/security/audit"      "drwxr-x---" "root" "audit" "稽核設定被改，就查不出誰動過什麼"
+ck_perm "FCB-AIX-0073" "$CAT_SYS" "/etc/group"               "/etc/group"               "-rw-r--r--" "root" "security" "可寫就能把自己加進特權群組"
+ck_perm "FCB-AIX-0074" "$CAT_SYS" "/etc/inetd.conf"          "/etc/inetd.conf"          "-rw-r--r--" "root" "system" "可寫就能開後門服務"
+ck_perm "FCB-AIX-0075" "$CAT_SYS" "/etc/motd"                "/etc/motd"                "-rw-r--r--" "bin"  "bin" "登入警語是公告，不該被使用者改"
+ck_perm "FCB-AIX-0076" "$CAT_SYS" "/etc/passwd"              "/etc/passwd"              "-rw-r--r--" "root" "security" "可寫就能改 UID 冒充他人"
+ck_perm "FCB-AIX-0077" "$CAT_SYS" "/etc/ssh/ssh_config"      "/etc/ssh/ssh_config"      "-rw-r--r--" "root" "system" "可寫就能被導到假主機或降級加密"
+ck_perm "FCB-AIX-0078" "$CAT_SYS" "/etc/ssh/sshd_config"     "/etc/ssh/sshd_config"     "-rw-r--r--" "root" "system" "可寫就能開放空密碼或 root 登入"
+ck_perm "FCB-AIX-0079" "$CAT_LOG" "/var/adm/cron/log"        "/var/adm/cron/log"        "-rw-rw----" "bin"  "cron" "這是事後追查依據，不可被讀走或改掉"
+ck_perm "FCB-AIX-0080" "$CAT_LOG" "/var/tmp/dpid2.log"       "/var/tmp/dpid2.log"       "-rw-r-----" "root" "system" "內含社群字串，不可全域可讀"
+ck_perm "FCB-AIX-0081" "$CAT_LOG" "/var/tmp/hostmibd.log"    "/var/tmp/hostmibd.log"    "-rw-r-----" "root" "system" "內含系統資訊，不可全域可讀"
+ck_perm "FCB-AIX-0082" "$CAT_LOG" "/var/tmp/snmpd.log"       "/var/tmp/snmpd.log"       "-rw-r-----" "root" "system" "內含社群字串，不可全域可讀"
+
+#=============================================================================
+# 83-85　PATH 與登入警示語
+#=============================================================================
+ck_path() {     # $1=id $2=名稱 $3=檔案
+    _std="$3 的 PATH；含目前目錄會讓人先跑到同名的假指令，( PATH 不含 . 與 :: )"
+    if [ ! -f "$3" ]; then
+        emit "$1" "Not-Applicable" "$CAT_SYS" "$2" "$_std" "$3 不存在"
+        return
+    fi
+    if [ ! -r "$3" ]; then
+        emit "$1" "Error" "$CAT_SYS" "$2" "$_std" "讀不到 $3（權限不足）"
+        return
+    fi
+    _l=`grep -E '^[ 	]*(export[ 	]+)?PATH=' "$3" 2>/dev/null | grep -E '(^|=|:)\.(:|$)|::' | head -n 2`
+    if [ -n "$_l" ]; then
+        emit "$1" "Non-Compliant" "$CAT_SYS" "$2" "$_std" "$_l"
+    else
+        _cur=`grep -E '^[ 	]*(export[ 	]+)?PATH=' "$3" 2>/dev/null | head -n 1`
+        [ -z "$_cur" ] && _cur="$3 未設定 PATH"
+        emit "$1" "Compliant" "$CAT_SYS" "$2" "$_std" "$_cur"
+    fi
+}
+ck_path "FCB-AIX-0083" "Remove current working directory from default /etc/environment PATH" "/etc/environment"
+ck_path "FCB-AIX-0084" "Remove current working directory from root's PATH"                   "/.profile"
+
+_std85="/etc/motd 登入警示語；法遵要求登入前要告知使用者，( 檔案有內容 )"
+if [ ! -f /etc/motd ]; then
+    emit "FCB-AIX-0085" "Non-Compliant" "$CAT_SYS" "Configuration: /etc/motd" "$_std85" "/etc/motd 不存在"
+else
+    _n=`grep -vE '^[ 	]*$' /etc/motd 2>/dev/null | wc -l | tr -d ' '`
+    if [ "$_n" -gt 0 ]; then
+        emit "FCB-AIX-0085" "Compliant" "$CAT_SYS" "Configuration: /etc/motd" "$_std85" "已設定，共 $_n 行；首行: `head -n 1 /etc/motd`"
+    else
+        emit "FCB-AIX-0085" "Non-Compliant" "$CAT_SYS" "Configuration: /etc/motd" "$_std85" "/etc/motd 內容為空"
+    fi
+fi
+
+#=============================================================================
+# 86-96、98　帳號與密碼原則
+#   minalpha / minother：CIS 建議 3，本行依管理辦法保留 1——
+#   這是**經核准的例外**，所以標準值欄位要把「建議值」跟「本行值」都寫出來，
+#   不可以只寫一個數字讓人以為系統不合規
+#=============================================================================
+ck_sec "FCB-AIX-0086" "minage"      "/etc/security/user default minage"      "1" "ge" \
+       "密碼最短使用期限；可立即改回舊密碼就等於沒換過，( 1 週以上 )"
+
+_std87="帳號密碼雜湊；沒有密碼的帳號等於敞開的門，( 每個未鎖定帳號都有雜湊 )"
+if [ "$AM_ROOT" -eq 1 ]; then
+    # ⚠️ 2026-09-23 自我稽核 A3：這裡原本還有一行 _nopw=...>/dev/null; echo ""，
+    # 輸出被丟掉、變數永遠是空字串、而且沒有任何地方用到它——
+    # 它看起來像第二重檢查，其實什麼都沒做，只會誤導讀程式的人。已刪。
+    #
+    # 另外加一道前置：先確認**檔案真的讀到了**。
+    # 沒有這道的話，檔案不存在或 awk 失敗都會讓 _bad 是空的 -> 判成 Compliant，
+    # 也就是「沒查到」冒充「沒問題」。
+    _pwn=`grep -c ':' /etc/security/passwd 2>/dev/null | tr -d ' '`
+    [ -z "$_pwn" ] && _pwn=0
+    _bad=`awk -F: '/^[a-zA-Z0-9_]+:$/{u=$1} /password *=/{gsub(/ /,"");split($0,a,"=");if(a[2]==""||a[2]=="*")print u}' /etc/security/passwd 2>/dev/null | tr '\n' ' '`
+    if [ "$_pwn" -eq 0 ]; then
+        emit "FCB-AIX-0087" "Error" "$CAT_ACC" "All accounts must have a hashed password" "$_std87" "/etc/security/passwd 讀不到任何內容——未查，不可視為合規"
+    elif [ -n "$_bad" ]; then
+        emit "FCB-AIX-0087" "Non-Compliant" "$CAT_ACC" "All accounts must have a hashed password" "$_std87" "無密碼帳號: $_bad"
+    else
+        emit "FCB-AIX-0087" "Compliant" "$CAT_ACC" "All accounts must have a hashed password" "$_std87" "/etc/security/passwd 內所有帳號皆有密碼雜湊"
+    fi
+else
+    emit "FCB-AIX-0087" "Error" "$CAT_ACC" "All accounts must have a hashed password" "$_std87" "非 root，讀不到 /etc/security/passwd"
+fi
+
+_std88="群組 GID 唯一性；撞號會讓兩個群組共用同一份權限，( GID 無重複 )"
+# ⚠️ 2026-09-23 自我稽核 A2：原本沒有任何「檔案讀到了沒」的判斷。
+# /etc/group 讀不到 -> _dup 空 -> 判 Compliant，證據字串還會印成
+# 「/etc/group 共 　個群組」（數字是空的）。實務風險低（644），但形狀是錯的：
+# 「沒有重複」的依據是一個空結果，而沒有任何證據顯示檔案被讀過。
+_n=`wc -l < /etc/group 2>/dev/null | tr -d ' '`
+[ -z "$_n" ] && _n=0
+_dup=`awk -F: '{print $3}' /etc/group 2>/dev/null | sort | uniq -d | tr '\n' ' '`
+if [ "$_n" -eq 0 ]; then
+    emit "FCB-AIX-0088" "Error" "$CAT_ACC" "All group names and GIDs must be unique" "$_std88" "/etc/group 讀不到任何內容——未查，不可視為合規"
+elif [ -n "$_dup" ]; then
+    emit "FCB-AIX-0088" "Non-Compliant" "$CAT_ACC" "All group names and GIDs must be unique" "$_std88" "重複 GID: $_dup"
+else
+    emit "FCB-AIX-0088" "Compliant" "$CAT_ACC" "All group names and GIDs must be unique" "$_std88" "/etc/group 共 $_n 個群組，GID 無重複"
+fi
+
+_std89="/etc/security/passwd 的 NOCHECK 旗標；有這個旗標密碼原則就完全不生效，( 無 NOCHECK )"
+if [ "$AM_ROOT" -eq 1 ]; then
+    _l=`grep -n 'NOCHECK' /etc/security/passwd 2>/dev/null | head -n 3 | tr '\n' ' '`
+    if [ -n "$_l" ]; then
+        emit "FCB-AIX-0089" "Non-Compliant" "$CAT_ACC" "Ensure new passwords are controlled by password attributes (disable NOCHECK)" "$_std89" "$_l"
+        emit "FCB-AIX-0090" "Non-Compliant" "$CAT_ACC" "Ensure password policy is enforced for all users" "$_std89" "$_l"
+    else
+        emit "FCB-AIX-0089" "Compliant" "$CAT_ACC" "Ensure new passwords are controlled by password attributes (disable NOCHECK)" "$_std89" "/etc/security/passwd 無 NOCHECK"
+        emit "FCB-AIX-0090" "Compliant" "$CAT_ACC" "Ensure password policy is enforced for all users" "$_std89" "/etc/security/passwd 無 NOCHECK"
+    fi
+else
+    emit "FCB-AIX-0089" "Error" "$CAT_ACC" "Ensure new passwords are controlled by password attributes (disable NOCHECK)" "$_std89" "非 root，讀不到 /etc/security/passwd"
+    emit "FCB-AIX-0090" "Error" "$CAT_ACC" "Ensure password policy is enforced for all users" "$_std89" "非 root，讀不到 /etc/security/passwd"
+fi
+
+ck_sec "FCB-AIX-0091" "minlen"      "/etc/security/user default minlen"      "8" "ge" \
+       "密碼最小長度；長度是抵抗暴力破解最有效的一項，( 8 個字元以上 )"
+ck_sec "FCB-AIX-0092" "minalpha"    "/etc/security/user default minalpha"    "1" "ge" \
+       "密碼最少英文字母數；CIS 建議 3，本行依管理辦法保留 1 為經核准之例外，( 1 個以上 )"
+ck_sec "FCB-AIX-0093" "minother"    "/etc/security/user default minother"    "1" "ge" \
+       "密碼最少非字母字元數；CIS 建議 3，本行依管理辦法保留 1 為經核准之例外，( 1 個以上 )"
+ck_sec "FCB-AIX-0094" "maxrepeats"  "/etc/security/user default maxrepeats"  "4" "le" \
+       "相同字元可連續使用個數；重複太多會大幅降低強度，( 4 以下，本行設 2 )"
+ck_sec "FCB-AIX-0095" "maxage"      "/etc/security/user default maxage"      "13" "le" \
+       "密碼最長使用期限；放太久外洩後的暴露期就越長，( 13 週以下，本行設 12 )"
+ck_sec "FCB-AIX-0096" "maxexpired"  "/etc/security/user default maxexpired"  "4" "le" \
+       "密碼過期後寬限期；拖太久不改等於沒有期限，( 4 週以下 )"
+
+#=============================================================================
+# 97　IgnoreRhosts
+#=============================================================================
+ck_sshd "FCB-AIX-0097" "sshd_config: IgnoreRhosts is 'yes' or 'shosts-only'" "IgnoreRhosts" "^(yes|shosts-only)$" \
+        "SSH IgnoreRhosts 參數；rhosts 信任可繞過密碼驗證，( yes 或 shosts-only )"
+
+#=============================================================================
+# 98　密碼加密演算法
+#=============================================================================
+_std98="密碼雜湊演算法；舊演算法可被離線破解，( pwd_algorithm = ssha512 )"
+if have lssec; then _o=`lssec -f /etc/security/login.cfg -s usw -a pwd_algorithm 2>/dev/null | tail -n 1`; else _o=""; fi
+_v=`echo "$_o" | sed 's/.*=//' | tr -d '" '`
+if [ -z "$_o" ]; then
+    emit "FCB-AIX-0098" "Error" "$CAT_ACC" "pwd_algorithm" "$_std98" "lssec 無輸出或無此指令（需 root／非 AIX）"
+elif [ "$_v" = "ssha512" ]; then
+    emit "FCB-AIX-0098" "Compliant" "$CAT_ACC" "pwd_algorithm" "$_std98" "$_o"
+else
+    emit "FCB-AIX-0098" "Non-Compliant" "$CAT_ACC" "pwd_algorithm" "$_std98" "$_o"
+fi
+
+#=============================================================================
+# 收尾：這兩行是「這份檔案跑完了」的唯一憑證
+#=============================================================================
+N_T=`expr $N_C + $N_N + $N_A + $N_E`
+echo "Check ended at: `date '+%Y-%m-%d %H:%M:%S'`" >> "$tmp_file"
+echo "Check summary: 合計 $N_T 項；Compliant $N_C；Non-Compliant $N_N；Not-Applicable $N_A；Error $N_E" >> "$tmp_file"
+
+mv "$tmp_file" "$flat_txt"
+chmod 640 "$flat_txt" "$dbg_file" 2>/dev/null
+
+#=============================================================================
+# 轉 HTML（比照 fcbrhelsh 的 F_TXT2HTML，多支援 FCB-AIX- 與四種結果顏色）
+#=============================================================================
+{
+echo "<html><head><meta charset=\"UTF-8\"><title>系統設定檢查</title><style>"
+echo "table { border-collapse: collapse; width: 100%; }"
+echo "th, td { border: 1px solid black; padding: 8px; text-align: left; }"
+echo "th { background-color: #f2f2f2; }"
+echo "</style></head><body><h1>系統設定檢查</h1>"
+} > "$output_file"
+
+_intable=0
+while IFS= read -r line
+do
+    case "$line" in
+        TWGCB-ID*)
+            echo "<table><tr><th>ID</th><th>檢查結果</th><th>類別</th><th>原則設定名稱</th><th>標準設定值</th><th>目前值</th></tr>" >> "$output_file"
+            _intable=1
+            ;;
+        FCB-*|TWGCB-*)
+            id=`echo "$line" | cut -f1 -d';'`
+            result=`echo "$line" | cut -f2 -d';'`
+            category=`echo "$line" | cut -f3 -d';'`
+            name=`echo "$line" | cut -f4 -d';'`
+            standard=`echo "$line" | cut -f5 -d';'`
+            currentv=`echo "$line" | cut -f6- -d';'`
+            case "$result" in
+                Compliant)      color="green"  ;;
+                Non-Compliant)  color="red"    ;;
+                Error)          color="orange" ;;
+                *)              color="gray"   ;;
+            esac
+            echo "<tr><td>$id</td><td style=\"color: $color;\">$result</td><td>$category</td><td>$name</td><td style='width: 40em;'>$standard</td><td style=\"color: $color;\">$currentv</td></tr>" >> "$output_file"
+            ;;
+        *)
+            [ "$_intable" -eq 1 ] && echo "</table>" >> "$output_file" && _intable=0
+            echo "<p>$line</p>" >> "$output_file"
+            ;;
+    esac
+done < "$flat_txt"
+[ "$_intable" -eq 1 ] && echo "</table>" >> "$output_file"
+echo "</body></html>" >> "$output_file"
+chmod 640 "$output_file" 2>/dev/null
+
+echo ""
+echo "產出："
+echo "  $flat_txt"
+echo "  $output_file"
+echo "  $dbg_file   <-- 有問題請把這個檔（或畫面）回傳"
+echo "合計 $N_T 項；Compliant $N_C；Non-Compliant $N_N；Not-Applicable $N_A；Error $N_E"

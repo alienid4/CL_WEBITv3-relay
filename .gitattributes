@@ -1,0 +1,29 @@
+# shell script 一律用 LF —— 這些檔案是要在 Linux 主機上執行的。
+#
+# 為什麼需要這條：Windows 端 git 預設 core.autocrlf=true，checkout 時會把 LF 轉成 CRLF。
+# 檔案經 Windows 中轉（clone / 下載解壓 / WinSCP 上傳）到 Linux 後，bash 會噴：
+#     setup.sh: line 13: $'\r': command not found
+#     syntax error near unexpected token `$'{\r''
+# 2026-07-28 公司 198-014 實際踩到，整支 setup.sh 完全跑不起來。
+# 有了這條，即使在 Windows 工作區，.sh 仍會以 LF 存放，中轉過去不會壞。
+*.sh text eol=lf
+
+# 這些同樣可能被丟到 Linux 上跑/讀，一併固定 LF
+*.py text eol=lf
+*.sql text eol=lf
+pre-commit text eol=lf
+
+# 二進位檔不要做任何換行轉換（轉了會直接損毀）
+*.whl binary
+*.tar.gz binary
+*.woff2 binary
+*.xlsx binary
+
+# 2026-09-22 又中同一個雷：`*.sh text eol=lf` 蓋不到**沒有副檔名**的 shell 腳本。
+# `APP/asset-module/scripts/fcbaixsh` 進版控後在 Windows checkout 變 CRLF，
+# 拿到 AIX／Linux 直接 `未預期的字組 $'do\r' 附近有語法錯誤`，整支跑不動。
+# 上游那幾支（fcbaixsh／fcbrhelsh）本來就沒有 .sh 副檔名，不能改名（DYN 與管理者都認那個名字），
+# 所以直接把整個 scripts/ 目錄釘成 LF。
+APP/asset-module/scripts/* text eol=lf
+fcbaixsh text eol=lf
+fcbrhelsh text eol=lf
