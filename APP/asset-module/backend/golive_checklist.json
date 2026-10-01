@@ -1,0 +1,114 @@
+{
+  "_comment": "伺服器上線前檢查表的項目定義（來源：公司現行 Word 版「伺服器上線前檢查表」，2026-08-15 使用者提供）。做成設定檔不寫死：檢查項目會隨資安政策每年調整，改這裡就好。check_type=auto 的項目由 golive.py 依系統既有事實（host_service 的監聽埠、hardware 的欄位）自動判定，並在上線後每天回檢一次；manual 的項目機器測不到（機櫃位置、群組權限、政策設定），人工勾一次就不再問。os_scope 決定這項對誰出現：both/windows/linux。fact 的三種型別：port_absent=這個埠不該有人聽、port_present=這個埠要聽得到、field_equals=hardware 的某欄位要跟上線當時一致。",
+  "items": [
+    {
+      "key": "os_version",
+      "category": "基本設定",
+      "label": "作業系統版本與上線時一致",
+      "os_scope": "both",
+      "check_type": "auto",
+      "fact": { "type": "field_equals", "field": "os" },
+      "note": "版本被就地升級/重灌是重大變更，不該悄悄發生"
+    },
+    {
+      "key": "hostname_fixed",
+      "category": "基本設定",
+      "label": "電腦名稱與上線時一致",
+      "os_scope": "both",
+      "check_type": "auto",
+      "fact": { "type": "field_equals", "field": "hostname" }
+    },
+    {
+      "key": "ip_fixed",
+      "category": "基本設定",
+      "label": "IP 與上線時一致",
+      "os_scope": "both",
+      "check_type": "auto",
+      "fact": { "type": "field_equals", "field": "ip" }
+    },
+    {
+      "key": "telnet_disabled",
+      "category": "弱點修補",
+      "label": "Telnet 服務停用（不得監聽 23）",
+      "os_scope": "both",
+      "check_type": "auto",
+      "fact": { "type": "port_absent", "port": 23 },
+      "note": "明文傳輸密碼，資安基本盤；這項失效是典型的『本來刻意關掉、後來被打開』"
+    },
+    {
+      "key": "ftp_disabled",
+      "category": "弱點修補",
+      "label": "FTP 服務停用（不得監聽 21）",
+      "os_scope": "both",
+      "check_type": "auto",
+      "fact": { "type": "port_absent", "port": 21 }
+    },
+    {
+      "key": "snmp_agent",
+      "category": "監控",
+      "label": "SNMP 代理運作中（監聽 161）",
+      "os_scope": "both",
+      "check_type": "auto",
+      "fact": { "type": "port_present", "port": 161, "proto": "udp" },
+      "note": "WhatsUp 監控靠它，agent 被關掉等於這台從監控上消失"
+    },
+    {
+      "key": "ssh_available",
+      "category": "基本設定",
+      "label": "SSH 可連線（監聽 22）",
+      "os_scope": "linux",
+      "check_type": "auto",
+      "fact": { "type": "port_present", "port": 22 }
+    },
+    {
+      "key": "smb_present",
+      "category": "基本設定",
+      "label": "SMB 服務運作中（監聽 445）",
+      "os_scope": "windows",
+      "check_type": "auto",
+      "fact": { "type": "port_present", "port": 445 }
+    },
+
+    { "key": "raid_tool", "category": "基本設定", "label": "HDD Raid 工具安裝或其他方式", "os_scope": "windows", "check_type": "manual" },
+    { "key": "admin_pw", "category": "基本設定", "label": "Administrator／root 密碼設定（永久有效）", "os_scope": "both", "check_type": "manual" },
+    { "key": "ap_account", "category": "基本設定", "label": "新增 AP 帳號（永久有效）", "os_scope": "both", "check_type": "manual" },
+    { "key": "group_svrsup", "category": "基本設定", "label": "群組管理者權限加入 APPM SVRsup001", "os_scope": "windows", "check_type": "manual" },
+    { "key": "group_rdu", "category": "基本設定", "label": "群組 RDU 加入 APPM SVR RDU", "os_scope": "windows", "check_type": "manual" },
+    { "key": "dmz_sysinfra", "category": "基本設定", "label": "DMZ 本機加入 sysinfra", "os_scope": "both", "check_type": "manual" },
+    { "key": "ap_no_admin", "category": "基本設定", "label": "AP 帳號禁用 administrator／root 權限", "os_scope": "both", "check_type": "manual" },
+    { "key": "remote_desktop_off", "category": "基本設定", "label": "關閉遠端桌面", "os_scope": "windows", "check_type": "manual" },
+    { "key": "firewall_on", "category": "基本設定", "label": "防火牆啟用（Windows 服務自動+啟動／Linux 防火牆）", "os_scope": "both", "check_type": "manual" },
+    { "key": "domain_join", "category": "基本設定", "label": "加入網域（DMZ 不需）", "os_scope": "windows", "check_type": "manual" },
+    { "key": "snmp_community", "category": "基本設定", "label": "SNMP 勾選 5 項 + 新增公司指定的 community", "os_scope": "both", "check_type": "manual" },
+    { "key": "telnet_ftp_client", "category": "基本設定", "label": "Telnet／FTP 用戶端功能安裝", "os_scope": "both", "check_type": "manual" },
+    { "key": "trend_av", "category": "防護", "label": "Trend 防毒安裝", "os_scope": "both", "check_type": "manual" },
+    { "key": "hw_mgmt_ip", "category": "基本設定", "label": "實體機硬體管理 IP 設定", "os_scope": "both", "check_type": "manual" },
+    { "key": "update_reboot_off", "category": "基本設定", "label": "UpdateOrchestrator 觸發 Reboot 停用", "os_scope": "windows", "check_type": "manual" },
+    { "key": "ms_telemetry_off", "category": "基本設定", "label": "停用微軟訊息通道", "os_scope": "windows", "check_type": "manual" },
+
+    { "key": "pw_policy", "category": "政策設定", "label": "密碼原則／帳戶鎖定原則", "os_scope": "both", "check_type": "manual" },
+    { "key": "audit_policy", "category": "政策設定", "label": "進階稽核原則設定", "os_scope": "both", "check_type": "manual" },
+    { "key": "adv_firewall_policy", "category": "政策設定", "label": "進階安全性的 Windows 防火牆（三個項目停用）", "os_scope": "windows", "check_type": "manual" },
+    { "key": "windows_update", "category": "政策設定", "label": "Windows Update 停用／已套最新更新", "os_scope": "windows", "check_type": "manual" },
+
+    { "key": "time_sync", "category": "弱點修補", "label": "校時設定（Windows Time 自動／NTP Client）", "os_scope": "both", "check_type": "manual" },
+    { "key": "tls_hardening", "category": "弱點修補", "label": "停用 TLS1.0／TLS1.1／SSL3／RC4／RC2／DES", "os_scope": "both", "check_type": "manual" },
+    { "key": "dh_2048", "category": "弱點修補", "label": "Diffie-Hellman 演算法改用 2048 位元以上", "os_scope": "both", "check_type": "manual" },
+    { "key": "rdp_ssl", "category": "弱點修補", "label": "RDP 使用轉換安全層 SSL", "os_scope": "windows", "check_type": "manual" },
+    { "key": "print_spooler_off", "category": "弱點修補", "label": "Print spooler 服務停用", "os_scope": "windows", "check_type": "manual" },
+
+    { "key": "whatsup_device", "category": "監控", "label": "WhatsUp 新增裝置（描述為 IP+用途）", "os_scope": "both", "check_type": "manual" },
+    { "key": "whatsup_ping", "category": "監控", "label": "WhatsUp PING(Default) + 動作啟動", "os_scope": "both", "check_type": "manual" },
+    { "key": "whatsup_perf", "category": "監控", "label": "WhatsUp CPU／Memory 效能圖顯示正常", "os_scope": "both", "check_type": "manual" },
+
+    { "key": "dotnet45", "category": "日誌", "label": ".NET 4.5+ 安裝完成", "os_scope": "windows", "check_type": "manual" },
+    { "key": "smbv2_enabled", "category": "日誌", "label": "啟用 SMBv2／SMBv3", "os_scope": "windows", "check_type": "manual" },
+    { "key": "arcsight_agent", "category": "日誌", "label": "ArcSight 設定完成並驗證", "os_scope": "both", "check_type": "manual" },
+    { "key": "arcsight_dmz_auth", "category": "日誌", "label": "DMZ 主機本機驗證帳號設定", "os_scope": "both", "check_type": "manual" },
+    { "key": "event_log_readers", "category": "日誌", "label": "加入群組 Event Log Readers", "os_scope": "windows", "check_type": "manual" },
+
+    { "key": "cydrone_apt", "category": "防護", "label": "CyDrone 端點 APT 防護", "os_scope": "both", "check_type": "manual" },
+    { "key": "asset_form_filled", "category": "其他", "label": "伺服器資料表填寫（機器序號／作業系統／帳號建權）", "os_scope": "both", "check_type": "manual" },
+    { "key": "other_notes", "category": "其他", "label": "其他項目註記", "os_scope": "both", "check_type": "manual" }
+  ]
+}

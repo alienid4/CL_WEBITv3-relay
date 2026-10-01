@@ -1,0 +1,5 @@
+<svg viewBox="0 0 214 44" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="弱點彙總追蹤">
+  <rect x="0" y="6" width="32" height="32" rx="6" fill="#009142"/>
+  <text x="8" y="29" font-family="sans-serif" font-size="18" font-weight="700" fill="#fff">V</text>
+  <text x="42" y="29" font-family="sans-serif" font-size="18" font-weight="600" fill="#00703a">弱點彙總追蹤</text>
+</svg>
