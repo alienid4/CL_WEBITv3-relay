@@ -1,0 +1,322 @@
+[
+  {
+    "id": "S1",
+    "desc": "專案骨架＋SQLite資料庫schema（硬體/人員/軟體三張表＋scan_history歷史表，欄位依MVP契約D23完整清單）",
+    "done_when": "checks 全 PASS，schema可建立空DB並跑基本CRUD",
+    "review": false,
+    "risk": "small",
+    "status": "done",
+    "attempts": 1
+  },
+  {
+    "id": "S2",
+    "desc": "Excel匯入功能：解析.xlsx三分頁、可設定欄位對應表（不寫死，D14精神）、寫入DB",
+    "done_when": "checks 全 PASS，可匯入一份假資料Excel且欄位對應可調整",
+    "review": false,
+    "risk": "medium",
+    "status": "done",
+    "attempts": 1
+  },
+  {
+    "id": "S3",
+    "desc": "vCenter/SNMP掃描邏輯（家裡用假資料mock回應，契約已定案的分層架構）",
+    "done_when": "checks 全 PASS，mock掃描可產生結構化結果",
+    "review": false,
+    "risk": "medium",
+    "status": "done",
+    "attempts": 1
+  },
+  {
+    "id": "S4",
+    "desc": "比對引擎：本次vs上次掃描→異常新增/異常消失；掃描vs ICA→漏登記（D24可比對層/僅顯示層邊界要正確）",
+    "done_when": "checks 全 PASS，三種異常類型都有測試案例覆蓋",
+    "review": true,
+    "risk": "large",
+    "status": "done",
+    "attempts": 1
+  },
+  {
+    "id": "S5",
+    "desc": "後端REST API層（D29 API優先）：儀表板統計、問題清單、資產查詢（含常用/進階分層）、主機詳細頁",
+    "done_when": "checks 全 PASS，API有基本測試",
+    "review": false,
+    "risk": "medium",
+    "status": "done",
+    "attempts": 1
+  },
+  {
+    "id": "S6",
+    "desc": "前端-登入驗證（D8本機帳密，不整合AD/SSO）",
+    "done_when": "checks 全 PASS",
+    "review": true,
+    "risk": "large",
+    "status": "done",
+    "attempts": 1
+  },
+  {
+    "id": "S7",
+    "desc": "前端-儀表板頁面（Nuxt3，套用HTML Mock v4視覺：環境篩選D25、重疊圖、問題清單摘要、掃描健康度）",
+    "done_when": "checks 全 PASS，畫面跟HTML Mock v4對得起來",
+    "review": false,
+    "risk": "medium",
+    "status": "done",
+    "attempts": 1
+  },
+  {
+    "id": "S8",
+    "desc": "前端-資產查詢＋主機詳細頁（D23完整欄位、D24分層邏輯不外露給使用者見D31）",
+    "done_when": "checks 全 PASS",
+    "review": false,
+    "risk": "medium",
+    "status": "done",
+    "attempts": 1
+  },
+  {
+    "id": "S9",
+    "desc": "前端-資料匯入頁面（對應S2後端）",
+    "done_when": "checks 全 PASS",
+    "review": false,
+    "risk": "medium",
+    "status": "done",
+    "attempts": 1
+  },
+  {
+    "id": "S10",
+    "desc": "連線帳密與連線目標儲存機制（D11不加密+檔案權限鎖定、D14/15管理介面合併帳密+連線目標同一表格）",
+    "done_when": "checks 全 PASS，密碼欄位write-only不回顯",
+    "review": true,
+    "risk": "high-risk",
+    "status": "done",
+    "attempts": 1
+  },
+  {
+    "id": "S11",
+    "desc": "系統設定頁-架構圖分頁（即時連線狀態視覺化，D15綠/紅/灰＋Port標示）",
+    "done_when": "checks 全 PASS",
+    "review": false,
+    "risk": "medium",
+    "status": "done",
+    "attempts": 1
+  },
+  {
+    "id": "S12",
+    "desc": "備份與清除排程（D6每日備份留7天、D7掃描紀錄留90天自動清除）",
+    "done_when": "checks 全 PASS，排程腳本可獨立測試觸發",
+    "review": false,
+    "risk": "small",
+    "status": "done",
+    "attempts": 1
+  },
+  {
+    "id": "S13",
+    "desc": "功能模組管理頁面（D28全系統模組化開關，每個功能可獨立開關不改程式碼）",
+    "done_when": "checks 全 PASS",
+    "review": false,
+    "risk": "medium",
+    "status": "done",
+    "attempts": 1
+  },
+  {
+    "id": "S14",
+    "desc": "管理後台-系統健康儀表+備份操作面板：燈號(綠/黃/紅)一眼看系統狀態，讓工程師/助理免命令列就能做備份與檢查。可手動觸發備份、看上次備份時間/結果、完整性檢查(integrity_check)結果、備份份數與異地狀態。建立在S12排程備份之上，把它可視化+可操作化。燈號:綠=上次備份成功且在時限內+integrity_check PASS+空間足;黃=備份逾時/只有本地無異地/空間偏低;紅=備份失敗/integrity_check失敗/DB讀不到。並順帶確認S12後端用安全快照(VACUUM INTO)+完整性檢查，主庫啟用WAL",
+    "done_when": "checks 全 PASS，管理後台看得到燈號、能手動觸發備份與檢查，燈號正確反映實際狀態",
+    "review": true,
+    "risk": "medium",
+    "status": "done",
+    "attempts": 1
+  },
+  {
+    "id": "S15",
+    "desc": "語意稽核：逐頁逐字檢查「這個數字現在還是真的嗎／這句話人看得懂嗎／狀態不成立時畫面會說什麼」。範圍 10 個畫面（儀表板/資產查詢/資產詳細/問題清單/掃描結果/納入管理/資料匯入/系統設定5分頁/系統聯通圖/登入）。起因：使用者肉眼掃過就抓到 4 個 bug，而 112 項測試全綠。 【已發現的第一例，2026-07-18 22:41 於 221 實機取得登入畫面後立刻抓到】一致率＝相符÷ICA登記，只問「我登記的東西還在不在」，不問「網路上有多少東西我沒登記」。實測 221：網路上 6 台、只登記 2 台、4 台未納管，畫面卻顯示一致率 100%。登記越少分數越高，一台都不登記就是完美——對資產盤點系統而言語意是反的。候選改法：改用聯集（相符÷(ICA登記+掃到沒登記)）＝2/6=33%，登記過期或有未納管機器都會讓分數下降。屬頭條數字的語意定義，需與使用者確認後再改。",
+    "done_when": "每個畫面的每個數字與敘述都能追溯到「此刻為真」，發現的落差都已修或已記錄",
+    "review": true,
+    "risk": "medium",
+    "status": "done",
+    "attempts": 1
+  },
+  {
+    "id": "S16",
+    "desc": "未知主機指紋辨識：掃到不認識的機器時要給人足夠線索判斷它是什麼。已實測可行：MAC+OUI廠商(00:0c:29=VMware)、開放埠(net_scan已探到但scan_history沒欄位存)、TTL、ARP表補強(.110/.113真實存在但掃描漏掉)。最強是 FACTS 收集(進機器拿真主機名/OS/序號/機型)但需目標主機 SSH key。關鍵原則：不可以問使用者「哪些IP是你的」——那正是本系統要回答的問題。",
+    "done_when": "納入管理頁對每台未登記主機顯示可辨識的證據；掃描不再漏掉只回應ARP的主機",
+    "review": true,
+    "risk": "medium",
+    "status": "done",
+    "attempts": 1
+  },
+  {
+    "id": "S17",
+    "desc": "既有測試的自我循環抽查：126 項裡有多少是「驗證我自己的假設」而非「驗證使用者看到的是真的」。判斷方法是逐支還原其對應的實作、確認測試會變紅。",
+    "done_when": "抽查涵蓋核心業務邏輯的測試，白過的已修或已標記",
+    "review": false,
+    "risk": "small",
+    "status": "done",
+    "attempts": 1
+  },
+  {
+    "id": "S18",
+    "desc": "異地備份：221 三顆 NVMe 同屬一個 LVM，機器內設任何路徑都是假異地。【定案 2026-07-20：異地放 222(另一台常開Linux)的 /ai_backup】。已做：異地路徑改可由畫面設定(app_settings優先，退回env，空字串明確清除)；backup health 依此判燈；API GET/PUT /api/backup/offsite；備份分頁加路徑輸入＋儲存＋立即備份驗證；SOP AI/SOP_異地備份_掛載222.md(222建資料夾+221用NFS或sshfs掛載+設路徑+驗證燈轉綠)；4支測試。異地複製機制本就現成(run_backup已會複製到offsite_dir)。剩使用者一次性動作：在221掛載222:/ai_backup(碰不到221，寫成SOP)、畫面設路徑、立即備份把燈點綠。",
+    "done_when": "異地路徑指向真正獨立的儲存(222掛載點)，備份健康燈號轉綠",
+    "review": false,
+    "risk": "small",
+    "status": "done",
+    "note": "程式與SOP完成；最後掛載+點綠是221上的一次性infra動作，待使用者執行",
+    "attempts": 1
+  },
+  {
+    "id": "S19",
+    "desc": "未受管主機自助納管。已完成：一鍵納管引擎（憑證不落地＋加密憑證庫＋稽核）、UI 一鍵納管（遠端/本機兩路）、Windows 改走 WinRM/CIM、身分解析＋髒資料正規化地基、【B 排程自動納管（2026-07-20）：授權網段閘門 auto_onboard_segment＋總開關(預設關)＋auto_onboard.py 引擎(可注入executor/憑證)＋掃描後自動接一輪＋系統設定「自動納管」分頁(授權網段可排序表/立即執行/auto稽核)＋憑證庫加 kind 過濾與 ssh 類型；只碰已登記未納管、不自動建資產、憑證不落地、trigger=auto 稽核；13 支測試守】、【VC 採集器（2026-07-20）：rvtools_import.py 讀 RVTools vInfo 標準欄位→身分解析(vm_uuid強配)→對到更新機器事實不碰業務欄位/新的建VC-資產/判不準進merge_review不亂合併；每列留source_record；API 上傳+待審佇列；匯入頁 RVTools 上傳區三態；10 支測試(合成樣本)】、【VC 自動匯入 方案B 檔案中繼（2026-07-20）：vcenter_autoimport.py 監看設定資料夾抓最新且寫完的RVTools檔、比last新才匯、半寫入(mtime<120s)跳過、鮮度燈health(綠/黃/紅/off)；掛進站內排程器每輪tick；API config/status/run；設定頁「vCenter 匯入」分頁(開關/資料夾/鮮度hero/立即抓/可複製的Windows排程匯出指令)；SOP AI/SOP_vCenter每晚自動匯入.md；12支測試】。S19 全線收尾。剩(未來優化)：直接連 vCenter API 更即時(現手動RVTools+自動抓已夠日常)。真機/真vCenter 未驗，靠真檔進來對。",
+    "done_when": "UI 能單台觸發納管並回報成敗；至少 Linux 端到端可用",
+    "review": true,
+    "risk": "large",
+    "status": "done",
+    "attempts": 1
+  },
+  {
+    "id": "M2-S1",
+    "desc": "M2 系統聯通圖 第一片：服務發現（一台主機看得出什麼服務）。service_collector.py（runner可注入、ss/netstat雙格式解析、v4/v6同服務去重、曝露判定all/localhost/specific、行程名拿不到不用埠號假裝、systemd單元清單、失敗明確拋錯不吞成空清單）；host_service 表（鍵用ip+proto+port+bind，未登記主機asset_serial可NULL；服務消失標gone_at不刪除、回來清標記）＋service_collect_runs 執行紀錄；service_inventory.py 寫入層（只收已納管、單台失敗不中斷、摘要區分「有行程名佐證」vs「僅埠號推測」）；API GET /api/services（後端排序白名單+空值排最後、port/ip/serial/exposure篩選）、/api/services/summary、POST /api/services/collect；前端 /services 頁（五磚摘要、三態採集按鈕、可排序全欄、埠可下鑽看誰也在跑、管理服務預設收合）＋資產詳細頁「服務」分頁；導覽與 feature_flag services。19支測試。",
+    "done_when": "畫面能對已納管主機收一輪服務並列出「哪台在聽哪個埠、是什麼服務、對外或僅本機」，資料可排序可下鑽",
+    "review": true,
+    "risk": "medium",
+    "status": "done",
+    "note": "家裡以注入runner驗過解析與寫入全鏈路，dev站台實跑畫面確認；真機（221對webit3scan唯讀帳號）尚未實測——預期只收得到埠、收不到行程名，畫面已為此準備「推測」標示與說明",
+    "attempts": 1
+  },
+  {
+    "id": "M2-S2",
+    "desc": "資產分類（平台/類型）＋全域搜尋。asset_classify.py：平台沿用 manage_state 判準（真OS>掃描推測>機型）、類型由 host_service 監聽埠推導(db/web/middleware/infra/mgmt)，沒收過服務標 unknown 不標主機（不製造假確定性）。/api/assets 加 platform/role 篩選(逗號多選、可疊加)並回傳分類欄位。全域搜尋 /api/search：分組回傳(資產/服務/業務系統/掃到但未登記)、數字當埠號精準比、每組限量+看全部；前端 GlobalSearch.vue 掛 topbar，300ms debounce、鍵盤↑↓/Enter/Esc、「/」聚焦。10 支測試。dev 站台實跑驗過。",
+    "done_when": "資產頁能依 Windows/Linux/AIX 與 DB/主機類型篩選；頂端一個框搜得到資產、服務、系統、未登記主機",
+    "review": false,
+    "risk": "medium",
+    "status": "done",
+    "attempts": 1
+  },
+  {
+    "id": "M3-S1",
+    "desc": "帳號盤點第一片（稽核導向）。account_collector.py 收 passwd/group/lastlog/chage/passwd -S/sudoers/authorized_keys，全部 LC_ALL=C（真機是中文語系，不強制語系會讓 R5 整條失效）；account_rules.py 8 條規則(R2 密碼逾期/R2b 永不過期/R5 閒置/R9 預設帳號/A1 空密碼/A2 UID0/A3 NOPASSWD/A4 免密碼金鑰)，門檻存 app_settings 可改；host_account + account_finding + account_collect_runs；API accounts/findings/collect/sudo-rules；/accounts 頁(稽核發現在前、清單在後、權限缺口講在最前面)。拿不到判 unknown 不判 pass；finding 每次重算不留舊紅燈；例外核准要有期限、過期自動回燈。221 真機驗過：120 帳號、14 條實質發現、7 個特權帳號。",
+    "done_when": "畫面能對已納管 Linux 主機盤點帳號並列出不合規項目與法規依據",
+    "review": true,
+    "risk": "large",
+    "status": "done",
+    "note": "真機驗過但 306 條仍是「查不到」——需 root 的欄位(密碼/sudo明細/authorized_keys)全缺。sudo 白名單已備好待使用者拍板是否佈署。webit3scan/sysctl/ansible_svc 這類服務帳號因 UID>=1000+bash shell 被歸類 human 而報閒置，需要「帳號分類人工覆寫」功能（下一片）。",
+    "attempts": 1
+  },
+  {
+    "id": "N1",
+    "desc": "收集入口收斂成單一動作（決策 C4）。使用者輸入網段或 IP 清單按一下，系統自己選路：掃到 22 → SSH(webit3scan)；掃到 445 → WinRM；活著但兩者不通 → 產 Push Agent 安裝包並列出「要請人裝」清單；完全不通 → 列進「只能靠匯入」。結果一張表：成功幾台、要人工處理幾台、各是哪幾台。檔案匯入維持獨立入口（那是既有資料進場，不是收集）。",
+    "done_when": "從 /adopt 一個入口做完整流程；四種結果都在同一張結果表上分得出來；有測試涵蓋『每種路徑各挑一台』的分派邏輯。",
+    "review": true,
+    "risk": "動到既有 /adopt 流程，要確認原本的一鍵納管沒被破壞",
+    "status": "done",
+    "note": "2026-08-16 完成。collect_dispatch.py（parse_targets 網段/範圍/單IP混用＋上限與 IPv6 防護、choose_route 四路純函式、run_dispatch 逐台執行並落地 collect_dispatch_run/result 讓重整還原得回來）；API POST /api/collect/dispatch、GET /api/collect/dispatch/latest、POST /api/collect/agent-package（未登記主機由人按下按鈕才補最小資產）；/adopt 上半段改成單一收集入口（貼目標→一鍵→五格摘要＋可排序結果表＋逐列下一步動作，agent 路給安裝包 modal，ssh 待佈身分路直接接既有一鍵納管）。23 支測試。自審抓到並修掉三個真問題：IPv6 /64 會先展開才檢查上限（記憶體吃光服務倒）、IPv6 範圍簡寫炸成 500、收集器本機被誤報成待佈身分（永遠修不好的假紅燈）。checks 全 PASS（513 passed）、eslint/vue-tsc/nuxt build 全綠、smoke_pages 19 頁 200、dev 站台端到端實跑過三種下場。真機（公司環境多台混合）未驗。",
+    "attempts": 1
+  },
+  {
+    "id": "N2",
+    "desc": "webit3scan 帳號的佈署路徑（卡點，決策 C3）。現有 ansible 不能幫我們建帳號，所以 pull 收集器在公司環境沒有可用身分。要決定：請資安／維運佈一次性 playbook，或那批主機改走 Push Agent（agent 不需要我們建帳號）。",
+    "done_when": "公司環境至少一台能用 webit3scan 收到 facts；或確定改走 Agent 並有安裝包流程。",
+    "review": false,
+    "risk": "沒解掉的話 pull 收集器在公司環境等於不能用",
+    "status": "done",
+    "note": "2026-08-16 解除。使用者確認資安／維運可以佈一次性 playbook。系統這邊已備妥四條路（決策 C5）：①Linux＝Ansible playbook，由 /api/onboard/script?fmt=ansible 即時從收集公鑰產（不是 repo 靜態檔——換過金鑰靜態檔會安靜失效：每台都佈成功但收集全連不進來），UI 在一鍵納管的「整批佈署」分頁；②AIX 8 台＝一次性納管腳本（mkuser／chuser／不佈 sudoers／ksh／openssl base64，且帳號名受 max_logname 限制用 webit3sc，見決策 C6），UI 平台多一個 AIX 選項；③Windows＝WinRM 不建帳號，要的是 AD 唯讀服務帳號＋Enable-PSRemoting＋防火牆放行 5985；④網路／儲存設備＝SNMP。收集鏈連帶修好：試連與 facts 收集的平台與 SSH 身分都跟著資產已知的真 OS 走，AIX 不會再被當成 Linux 收（原本症狀是「連得上但每個欄位都空的」，跟權限不足長得一樣，最難查）。18 支測試。剩使用者動作：把 playbook 交給資安／維運、AIX 那 8 台請人各跑一次、跟 AD 要 Windows 唯讀服務帳號。",
+    "attempts": 1
+  },
+  {
+    "id": "N3",
+    "desc": "公司主機實地套一次 patch，驗證新加的 [4.5/5] schema 遷移步驟。本機已驗過產包內容，但沒有在真的目標主機跑過。",
+    "done_when": "公司主機套用後 /api/version 版號正確、新頁面（單據檔案室等）打得開不出現 no such table。",
+    "review": false,
+    "risk": "遷移失敗會讓新頁面 no such table，但腳本有備份 DB 與還原指令",
+    "status": "todo",
+    "note": "2026-08-16 patch 通路改成自動化，等使用者帶去公司實跑。**改抓 relay 的 patches/latest/**（不再是 dist/ 裡某個檔名）——CI 每次 push 到 main 都會從 .project/release_baseline.json 產累積包放進去，公司套一次就到位、不用管中間漏幾包。SOP：AI/SOP_公司主機套patch_20260816.md（五項驗收＋還原指令）。目前累積範圍 a89feb1→HEAD（0.72.1→0.88.1）。查證發現 relay 從 08-15 15:19 起連續失敗 9 次（殘留掃描擋下 golive_checklist.json 的公司識別字），整天連程式碼都沒同步而沒人發現——已補三道：CI 自己產包、失敗開 issue、checks.py 把 CI 紅燈拉到每次 commit 前並寫進 CURRENT_STATE。家裡已用舊 schema 模擬過遷移（40→42 張表、既有資料原封不動、重跑冪等）。套完請回報，我要前進 release_baseline（那是下一包累積包的起點，只有確認公司真的套用成功才能動）。"
+  },
+  {
+    "id": "N4",
+    "desc": "把手上累積的 Word 單據（異動需求單／上線前檢查表）全部匯入單據檔案室，並清掉『待確認』佇列。功能已完成，這是資料建置作業。",
+    "done_when": "全部匯入、待確認數歸零、對出來的落差有人看過。",
+    "review": false,
+    "risk": "低",
+    "status": "todo",
+    "note": "2026-08-16。6 份樣本實測：自動綁定 4/6，並抓到一台漏登記的機器（SECSVR162-022）。"
+  },
+  {
+    "id": "R1",
+    "desc": "月報表3的『實體主機（AIX／IBM i）』完全沒有 IBM i，而且要只列正式環境。根因已查明：system_report.virtualization_env() 用 `WHERE os LIKE '%AIX%' OR os LIKE '%IBM i%'` 查 hardware 的**原始 os 欄**，但 IBM i 那 43 台的原始值是 V7R1/V7R3/V7R5，字串裡根本沒有『IBM i』——只有正規化後的 canonical 才是『IBM i 7.3』。AIX 剛好原始值就寫 AIX 所以查得到，掩蓋了這個 bug。改法：走 classify_assets() 的 platform 欄位判斷（那份是聚合與下鑽共用的唯一來源），不要再對原始字串做 LIKE。",
+    "done_when": "表3 列得出 AIX 與 IBM i 兩種；環境只顯示正式（備援／測試不列）；台數與使用者月報上那張表對得起來。",
+    "review": false,
+    "risk": "低",
+    "status": "done",
+    "note": "2026-08-21 使用者截圖回報。他的月報那張表有 3 台 AIX ＋ 7 台 IBM i，全部是正式；系統目前列出 8 台全是 AIX 且混進備援/測試。 | 2026-08-21(PC) 修完：virtualization_env() 改走 classify_assets() 的platform欄位，加environment=='正式'過濾，測試守住IBM i/AIX都出現且非正式環境不進來。"
+  },
+  {
+    "id": "R2",
+    "desc": "月報表3的版本欄要標示 EOS 狀態：已 EOS 的用不同顏色並註明 EOS 日期；同一叢集混版時兩個版本分兩行顯示（目前擠在同一行用 / 分隔，很難讀）。ESXi 版本的 EOS 日期可走既有的 eos.lookup_os_eos()，版本字串是『VMware ESXi 7.0.3 build-…』要先取到可比對的 canonical。",
+    "done_when": "已 EOS 的版本用警示色顯示並帶日期；混版的每個版本各佔一行、各自標自己的 EOS 狀態。",
+    "review": false,
+    "risk": "低",
+    "status": "done",
+    "note": "2026-08-21 使用者交代。實測資料裡 7.0.3 已 EOS、8.0.3 支援中，板橋 BQ_PROD_LOG_Cluster 與敦南 DN_PROD_Cluster01 都是混版。 | 2026-08-21(PC) 修完：clusters改成(vcenter,cluster,version)分組，每列各自查eos.lookup_os_eos()、混版拆多列，drill_cluster()加version參數維持可追（測試：每列count == 帶version下鑽的筆數）。"
+  },
+  {
+    "id": "X1",
+    "desc": "升 Nuxt 3.21.8 → 3.21.10（修 GHSA-9473-5f9j-94wq，CVSS 8.1 RCE，Server Island Props 樣板注入；另兩個 CVSS 7.5 DoS）。**使用者拍板：這件事排第一，做完才輪到 Codex**",
+    "done_when": "npm run build 過、npx vitest run 全綠、pytest tests/asset_module 全綠、checks.py 全 PASS、npm audit 不再列這三個 advisory；打成 patch 給使用者",
+    "review": false,
+    "risk": "medium",
+    "status": "done",
+    "attempts": 1
+  },
+  {
+    "id": "X2",
+    "desc": "寫 AGENTS.md（給公司 Codex 的規則檔）＋ MD 交接格式範本。設計已談定見 AI/交接摘要_2026-08-26.md：他只寫測試不改程式、產出走 email 的 Markdown、不得含真實 IP／公司識別字、報事實不下結論、每條測試帶「預期：綠／不確定」標籤",
+    "done_when": "AGENTS.md 與範本寫好；MD 格式要嚴格到我能機械式還原成檔案（一節一檔、完整路徑、完整內容、不准用 ... 省略）",
+    "review": false,
+    "risk": "small",
+    "status": "done",
+    "attempts": 1
+  },
+  {
+    "id": "X3",
+    "desc": "221 補部署到最新版（目前停在 v1.22.0 / 1504615，落後 4 版）",
+    "done_when": "deploy.sh 的 [7.6/7] 三方一致；migration 欄位確認生效",
+    "review": false,
+    "risk": "small",
+    "status": "done",
+    "attempts": 1
+  },
+  {
+    "id": "X4",
+    "desc": "分類匯入的兩個未完成：①乾跑沒顯示 new_categories（後端算了但畫面沒露出）②佔位分類不會自己消失——寫入後分類數 26→29，多出三個 0 台的殭屍項目（C.（示範企業）App 等），有人可能手動選到。修法：用字母編號當識別，新分類字母跟既有相同且既有那個 0 台就直接取代名稱\n【2026-08-27已修】seed_categories_from_rows() 新增 renamed_categories 回傳欄位；zombie_rename 邏輯：新分類跟既有某筆同字母且該筆目前 0 台，直接改名（更新原entry）不新增。前端 classify.vue 補上 new_categories／renamed_categories 兩個區塊顯示（原本後端算了但畫面沒有任何地方讀取這兩個欄位）。測試：tests/asset_module/test_classify.py 新增 3 條（全新分類會回報、同字母0台會改名、同字母非0台不會被覆蓋）。",
+    "done_when": "乾跑列得出會新增哪些分類；寫入後分類總數是 26 不是 29；有測試守",
+    "review": false,
+    "risk": "small",
+    "status": "done",
+    "attempts": 1
+  },
+  {
+    "id": "X5",
+    "desc": "221 的 /api/version 回報 dirty:true——git reset --hard 之後不該是 dirty，尚未查是什麼檔案在動。這是「跑的到底是不是這份 commit」的可信度問題，跟 8/20 版號騙人是同一族",
+    "done_when": "查出是哪些檔案；要嘛修掉要嘛寫進 .gitignore 並說明理由",
+    "review": false,
+    "risk": "small",
+    "status": "done",
+    "attempts": 1
+  },
+  {
+    "id": "X6",
+    "desc": "單據檔案室：283 份全判成「異動需求單」、上線檢查表 0 筆。**待使用者回答**那批裡本來有沒有上線檢查表——有的話是 _doc_type 判定規則沒中",
+    "done_when": "2026-08-28 在公司正式機唯讀查證：doc_archive 裡帶「上線／檢查／檢核」字樣的檔名 0 筆，283 筆全部是 provision_form。分類規則沒有判錯，「上線檢查表 0 筆」的原因是那批文件從來沒被匯入（另見 N4）。",
+    "review": false,
+    "risk": "small",
+    "status": "done",
+    "attempts": 0
+  },
+  {
+    "id": "X7",
+    "desc": "補上 SEC1 查出的兩個缺口：①盤查帳號 AD 納管（現在是本機帳號 webit3scan）②逐條記錄「在哪台、用什麼身分、執行了哪一行指令」的執行日誌。詳見決策 SEC1/SEC2",
+    "done_when": "AD 那條要嘛實作要嘛跟資安修正條件（不可以宣稱做到）；執行日誌要能回答稽核「你在我機器上跑了什麼」",
+    "review": false,
+    "risk": "medium",
+    "status": "todo",
+    "attempts": 0
+  }
+]
