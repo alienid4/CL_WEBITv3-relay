@@ -1,0 +1,416 @@
+[
+  {
+    "name": "Windows 10",
+    "eos_kind": "End of Support",
+    "eos_date": "2025-10-14",
+    "source_url": "https://learn.microsoft.com/en-us/lifecycle/products/windows-10-home-and-pro",
+    "extendable": true,
+    "note": "適用 Home/Pro/Pro Education/Pro for Workstations。有付費/免費 ESU (Extended Security Updates) 方案可延，細節見 https://learn.microsoft.com/en-us/windows/whats-new/enable-extended-security-updates 。LTSC 版本另有各自生命週期，不在此列。官方原文：Windows 10 will reach end of support on October 14, 2025。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Windows 11",
+    "eos_kind": "End of Servicing（依 Version 各自到期，無單一日期）",
+    "eos_date": null,
+    "source_url": "https://learn.microsoft.com/en-us/lifecycle/products/windows-11-home-and-pro",
+    "extendable": false,
+    "note": "走 Modern Lifecycle，沒有單一 EOL 日期，是每個 Version（23H2/24H2/25H2…）各自到期。查詢當下(2026-08-11)已知：23H2 已於2025-11-12到期；24H2 到期日 2026-10-14；25H2 到期日 2027-10-13。要查特定資產的 EOS，須先確認裝的是哪個 Version，不可套用單一日期——這是本模組目前的已知限制，逐機型 Version 對照未做。",
+    "confidence": "no_single_date"
+  },
+  {
+    "name": "Windows Server 2012",
+    "eos_kind": "End of Extended Support",
+    "eos_date": "2023-10-10",
+    "source_url": "https://learn.microsoft.com/en-us/lifecycle/products/windows-server-2012-r2",
+    "extendable": true,
+    "note": "涵蓋 Windows Server 2012 與 2012 R2（兩者 Extended End 同一天）。Mainstream End 2018-10-09。有付費 ESU，官方頁列出可延到 2026-10-14（Year 3 結束）。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Windows Server 2016",
+    "eos_kind": "End of Extended Support",
+    "eos_date": "2027-01-12",
+    "source_url": "https://learn.microsoft.com/en-us/lifecycle/products/windows-server-2016",
+    "extendable": true,
+    "note": "Mainstream End 2022-01-11。有付費 ESU（透過 Azure Arc 交付），確切延長年限表未在此頁列出，需另查 ESU 專頁。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Windows Server 2019",
+    "eos_kind": "End of Extended Support",
+    "eos_date": "2029-01-09",
+    "source_url": "https://learn.microsoft.com/en-us/lifecycle/products/windows-server-2019",
+    "extendable": false,
+    "note": "Mainstream End 2024-01-09。官方頁未列出付費 ESU 方案（不排除屆時比照 2012/2016 推出，需屆時另查）。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Windows Server 2022",
+    "eos_kind": "End of Extended Support",
+    "eos_date": "2031-10-14",
+    "source_url": "https://learn.microsoft.com/en-us/lifecycle/products/windows-server-2022",
+    "extendable": false,
+    "note": "Mainstream End 2026-10-13。適用 Datacenter/Datacenter Azure Edition/Essentials/Standard 全版本。官方頁未列出付費 ESU 方案，屆期前需另查證。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Red Hat Enterprise Linux 6",
+    "eos_kind": "End of Extended Life-cycle Support (ELS)",
+    "eos_date": "2024-06-30",
+    "source_url": "https://access.redhat.com/articles/4038291",
+    "extendable": true,
+    "note": "Maintenance Support 2 (mainstream) 已於 2020-11-30 結束，付費 ELS 延到 2024-06-30 才是最終官方結束日。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Red Hat Enterprise Linux 7",
+    "eos_kind": "End of Maintenance Support 2（另有付費 ELS 延至 2029-05-31）",
+    "eos_date": "2024-06-30",
+    "source_url": "https://www.redhat.com/en/technologies/linux-platforms/enterprise-linux/rhel-7-end-of-maintenance",
+    "extendable": true,
+    "note": "主線 x86_64 於 2024-06-30 結束標準維護。付費 Extended Life Cycle Support (ELS) 針對 7.9 可延到 2029-05-31。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Red Hat Enterprise Linux 8",
+    "eos_kind": "End of Maintenance Support（Full Support 已於 2024-05-31 結束；另有付費 ELS 延至約 2032）",
+    "eos_date": "2029-05-31",
+    "source_url": "https://access.redhat.com/support/policy/updates/errata",
+    "extendable": true,
+    "note": "10 年生命週期：5年 Full Support + 5年 Maintenance Support。官方頁面生命週期表是 JS 動態渲染，工具只抓到頁面文字確認「ELC 從 2029-06-01 起接手」，間接佐證 2029-05-31 是 Maintenance Support 結束日；未能直接讀到逐日期表格原文。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Red Hat Enterprise Linux 9",
+    "eos_kind": "End of Maintenance Support（Full Support 至 2027-05-31；另有付費 ELC 延至約 2035）",
+    "eos_date": "2032-05-31",
+    "source_url": "https://access.redhat.com/support/policy/updates/errata",
+    "extendable": true,
+    "note": "同 RHEL 8 情況：官方頁生命週期表格為 JS 動態渲染，本次工具無法完整擷取表格原文，日期依官方「10年生命週期」政策文字＋GA日期(2022-05-17)推算＋第三方 EOL 站交叉核對。建議之後有機會用能執行 JS 的工具直接核對原文表格。",
+    "confidence": "unverified"
+  },
+  {
+    "name": "CentOS 4",
+    "eos_kind": "End of Life",
+    "eos_date": "2012-02-29",
+    "source_url": "https://lists.centos.org/pipermail/centos-announce/2012-February/018462.html",
+    "extendable": false,
+    "note": "官方 CentOS-announce 郵件公告，7 年企業生命週期滿。無官方付費延長選項。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "CentOS 6",
+    "eos_kind": "End of Life",
+    "eos_date": "2020-11-30",
+    "source_url": "https://blog.centos.org/2020/12/centos-community-newsletter-december-2020-2012/",
+    "extendable": false,
+    "note": "官方 CentOS Project 部落格明載。CentOS 6 無官方付費延長支援選項。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "CentOS 7",
+    "eos_kind": "End of Life",
+    "eos_date": "2024-06-30",
+    "source_url": "https://blog.centos.org/2023/04/end-dates-are-coming-for-centos-stream-8-and-centos-linux-7/",
+    "extendable": false,
+    "note": "跟隨 RHEL 7 的 Maintenance 結束日。CentOS 官方無付費延長選項（第三方如 TuxCare/CIQ 有提供付費 ELS，非 CentOS 官方）。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Oracle Linux 7",
+    "eos_kind": "End of Premier Support",
+    "eos_date": "2024-12",
+    "source_url": "https://www.oracle.com/a/ocom/docs/elsp-lifetime-069338.pdf",
+    "extendable": true,
+    "note": "原訂 2024-07，Oracle 已公告延長至 2024-12（僅標示到月份，官方文件未見確切日）。之後可付費 Extended Support 至 2029-07，其後無限期 Sustaining Support（僅修安全漏洞）。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Oracle Linux 8",
+    "eos_kind": "End of Premier Support",
+    "eos_date": "2029-07",
+    "source_url": "https://www.oracle.com/a/ocom/docs/elsp-lifetime-069338.pdf",
+    "extendable": true,
+    "note": "10 年 Premier Support（GA 2019-07 起算），僅標示到月份。之後可付費 Extended Support 至 2032-07。oracle.com 對自動化擷取回傳 403，日期經 Oracle 官方社群公告與第三方站交叉核對，未能直接讀取 PDF 原文確認。",
+    "confidence": "unverified"
+  },
+  {
+    "name": "Debian 8",
+    "eos_kind": "End of Life (LTS support ended)",
+    "eos_date": "2020-06-30",
+    "source_url": "https://www.debian.org/News/2020/20200709",
+    "extendable": true,
+    "note": "Debian 專案本身官方支援（含 LTS）到此結束。市面上的 Debian 8 ELTS（延到 2025-06-30）是第三方 Freexian 提供，非 Debian 官方，跟 Debian 10 記錄同一慣例只取官方日期。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Debian 10",
+    "eos_kind": "End of Life (LTS support ended)",
+    "eos_date": "2024-06-30",
+    "source_url": "https://www.debian.org/News/2024/20240615",
+    "extendable": false,
+    "note": "Debian 專案本身無官方付費延長方案（市面上的 Debian ELTS 是第三方 Freexian 提供）。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Debian 11",
+    "eos_kind": "End of Life (LTS support ends)",
+    "eos_date": "2026-08-31",
+    "source_url": "https://www.debian.org/releases/bullseye/",
+    "extendable": false,
+    "note": "完整支援至 2024-08-14，之後 LTS 至 2026-08-31 結束（全生命週期共 5 年）。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Ubuntu 18.04",
+    "eos_kind": "End of Standard Support",
+    "eos_date": "2023-05-31",
+    "source_url": "https://ubuntu.com/blog/18-04-end-of-standard-support",
+    "extendable": true,
+    "note": "5 年 LTS 標準支援。之後轉入 Ubuntu Pro 的 Expanded Security Maintenance (ESM)，可延至 2028-04（總計約 10 年）。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Ubuntu 22.04",
+    "eos_kind": "End of Standard Support",
+    "eos_date": "2027-04",
+    "source_url": "https://documentation.ubuntu.com/release-notes/22.04/",
+    "extendable": true,
+    "note": "5 年標準維護更新，官方頁僅標示到月份。可透過 Ubuntu Pro ESM 延至 2032-04。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Ubuntu 24.04",
+    "eos_kind": "End of Standard Support",
+    "eos_date": "2029-05-31",
+    "source_url": "https://discourse.ubuntu.com/t/noble-numbat-release-notes/39890",
+    "extendable": true,
+    "note": "5 年標準安全維護。可透過 Ubuntu Pro ESM 延至約 10 年，加購 Legacy add-on 可到 12 年。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "SUSE Linux Enterprise 11",
+    "eos_kind": "End of General Support (Mainstream)",
+    "eos_date": "2019-03-31",
+    "source_url": "https://www.suse.com/c/explore-options-for-suse-linux-enterprise-11-service-pack-4-end-of-life-mar-31-2019/",
+    "extendable": true,
+    "note": "SLES 11 全系列（含 SP4 終版）統一日期，跟 SLES 12 同一慣例。付費 LTSS 可延至 2022-03-31。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "SUSE Linux Enterprise 12",
+    "eos_kind": "End of General Support (Mainstream)",
+    "eos_date": "2024-10-31",
+    "source_url": "https://www.suse.com/lifecycle/",
+    "extendable": true,
+    "note": "SLES 12 全系列（含 SP5 終版）統一日期。付費 LTSS (Long Term Service Pack Support) 可延至 2030-10-31。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Rocky Linux 8",
+    "eos_kind": "End of Life",
+    "eos_date": "2029-05-31",
+    "source_url": "https://wiki.rockylinux.org/rocky/version/",
+    "extendable": false,
+    "note": "10 年支援週期：Active Support 至 2024-05-31，之後 Maintenance-only 到 EOL。Rocky Linux 無官方付費延長方案。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Rocky Linux 9",
+    "eos_kind": "End of Life",
+    "eos_date": "2032-05-31",
+    "source_url": "https://wiki.rockylinux.org/rocky/version/",
+    "extendable": false,
+    "note": "Active Support 至 2027-05-31，之後 Maintenance-only 到 EOL。Rocky Linux 無官方付費延長方案。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "AIX 7.2",
+    "eos_kind": "End of Service (EOS)",
+    "eos_date": null,
+    "source_url": "https://www.ibm.com/support/pages/lifecycle/details/?q45=aix+7.2",
+    "extendable": false,
+    "note": "IBM 官方 Product Lifecycle 查詢頁確認：AIX 7.2.0 目前未公告 End of Service 日期，僅標示政策為 Enhanced（最少5年+可延3年）。IBM 慣例是日期確定前不預先公布，不可用網路流傳的「2027年」等第三方推測日期。",
+    "confidence": "no_official_date"
+  },
+  {
+    "name": "IBM i",
+    "eos_kind": "End of Standard Support（依版本而異）",
+    "eos_date": null,
+    "source_url": "https://www.ibm.com/support/pages/ibm-i74x",
+    "extendable": true,
+    "note": "採 Enhanced 生命週期政策，每版本至少5年+可付費延3年。已知：7.4 Standard Support 於 2026-09-30 結束、可付費延至 2029-09-30。7.5／7.6（現行最新）官方尚未公布 EOS。要查特定資產須先知道裝的是哪個版本，本欄不可直接套用。",
+    "confidence": "no_single_date"
+  },
+  {
+    "name": "VMware ESXi 6.0",
+    "eos_kind": "End of General Support",
+    "eos_date": "2020-03-12",
+    "source_url": "https://knowledge.broadcom.com/external/article/318892/end-of-general-support-for-vsphere-60.html",
+    "extendable": false,
+    "note": "Technical Guidance（僅自助服務入口，不含新修補/資安更新）延續至 2022-03-12。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "VMware ESXi 6.5",
+    "eos_kind": "End of General Support",
+    "eos_date": "2022-10-15",
+    "source_url": "https://knowledge.broadcom.com/external/article/326984/end-of-general-support-for-vsphere-65677.html",
+    "extendable": false,
+    "note": "同一份官方公告涵蓋 6.5/6.6/6.7。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "VMware ESXi 6.7",
+    "eos_kind": "End of General Support",
+    "eos_date": "2022-10-15",
+    "source_url": "https://knowledge.broadcom.com/external/article/326984/end-of-general-support-for-vsphere-65677.html",
+    "extendable": false,
+    "note": "同一份官方公告涵蓋 6.5/6.6/6.7。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "VMware ESXi 7.0",
+    "eos_kind": "End of General Support",
+    "eos_date": "2025-10-02",
+    "source_url": "https://knowledge.broadcom.com/external/article/415405/end-of-general-support-for-vsphere-70.html",
+    "extendable": false,
+    "note": "官方原文：The End of general support for vSphere 7.0 was October 2nd, 2025。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "VMware ESXi 8.0",
+    "eos_kind": "End of General Support",
+    "eos_date": null,
+    "source_url": null,
+    "extendable": false,
+    "note": "查無可公開存取、不需登入的官方頁明載 EOL 日期。權威來源 Broadcom Product Lifecycle Matrix 需登入 support.broadcom.com 才能查看。多個第三方站一致引用 2027-10-11，但依規則不可採信非官方頁面，故留白。",
+    "confidence": "no_official_date"
+  },
+  {
+    "name": "Red Hat CoreOS 4.12",
+    "eos_kind": "End of Maintenance Support（隨 OpenShift Container Platform 4.12 生命週期）",
+    "eos_date": "2024-07-17",
+    "source_url": "https://access.redhat.com/product-life-cycles/?product=OpenShift%20Container%20Platform%204",
+    "extendable": true,
+    "note": "Red Hat CoreOS 版本號跟隨 OpenShift Container Platform (OCP) 版本，此為 OCP 4.12 的官方生命週期資料（透過官方 API product-life-cycles/api/v1/products 確認）。4.12 為 EUS 標記版本，付費加購 EUS 可延至 2027-01-17。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Red Hat CoreOS 4.18",
+    "eos_kind": "End of Maintenance Support（隨 OpenShift Container Platform 4.18 生命週期）",
+    "eos_date": "2026-08-25",
+    "source_url": "https://access.redhat.com/product-life-cycles/?product=OpenShift%20Container%20Platform%204",
+    "extendable": true,
+    "note": "同上，OCP 4.18 官方生命週期資料（官方 API 確認 end_date 精確到秒）。付費加購 EUS 可延至 2028-02-25。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "FortiOS 6",
+    "eos_kind": "End of Support（依子版本而異）",
+    "eos_date": null,
+    "source_url": null,
+    "extendable": true,
+    "note": "查得到的資料來源是 Fortinet 官方支援論壇（community.fortinet.com），不是正式生命週期公告頁——依本模組規則「不接受論壇」，故不採用，留白。論壇內容顯示 6.4 EOS 原訂 2024-09-30、後展延至 2026-03-31（FortiCare Elite 客戶）。真正的官方權威時程表在 support.fortinet.com/Information/ProductLifeCycle.aspx，需登入才能查看，本次未能存取。",
+    "confidence": "source_rejected"
+  },
+  {
+    "name": "FortiOS 7",
+    "eos_kind": "End of Support（依子版本而異）",
+    "eos_date": null,
+    "source_url": null,
+    "extendable": true,
+    "note": "同 FortiOS 6：唯一查到的來源是官方支援論壇（非正式生命週期頁），依規則不採用。論壇資料顯示 7.0 EOS 2025-09-30、7.2 EOS 2026-09-30、7.4 展延至 2028-11-11、7.6 展延至 2030-01-25，僅供參考。權威時程表需登入 support.fortinet.com/Information/ProductLifeCycle.aspx。",
+    "confidence": "source_rejected"
+  },
+  {
+    "name": "PAN-OS 9.1",
+    "eos_kind": "End of Life",
+    "eos_date": "2024-06-30",
+    "source_url": "https://www.paloaltonetworks.com/services/support/end-of-life-announcements/end-of-life-summary",
+    "extendable": false,
+    "note": "官方 EOL 總表列出：發布日 2019-12-13，無 Extended Support+ 選項。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "PAN-OS 10.2",
+    "eos_kind": "End of Life（標準支援）",
+    "eos_date": "2025-08-27",
+    "source_url": "https://www.paloaltonetworks.com/services/support/end-of-life-announcements/end-of-life-summary",
+    "extendable": true,
+    "note": "發布日 2022-02-27。另有 Extended Support+ 選項可延至 2027-03-31（付費/特定機型，該延長日期於2026-05-12更新過）。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "F5 BIG-IP 15",
+    "eos_kind": "End of Technical Support (EoTS) / End of Life",
+    "eos_date": "2024-12-31",
+    "source_url": "https://my.f5.com/manage/s/article/K5903",
+    "extendable": false,
+    "note": "指 15.1.x（LTS）。僅 FIPS Validated 平台延至 2025-12-31（既定日期非付費延伸）。my.f5.com 為登入後 JS 動態頁，本次工具無法重新開啟核對頁面原文，日期取自研究階段的搜尋結果。",
+    "confidence": "unverified"
+  },
+  {
+    "name": "F5 BIG-IP 16",
+    "eos_kind": "End of Technical Support (EoTS) / End of Life",
+    "eos_date": "2025-07-31",
+    "source_url": "https://my.f5.com/manage/s/article/K5903",
+    "extendable": false,
+    "note": "指 16.1.x（LTS）。同 15.x，my.f5.com 為 JS 動態頁，本次未能重新開啟核對頁面原文。",
+    "confidence": "unverified"
+  },
+  {
+    "name": "F5 BIG-IP 17",
+    "eos_kind": "End of Technical Support (EoTS) / End of Software Development (EoSD)",
+    "eos_date": "2027-03-31",
+    "source_url": "https://my.f5.com/manage/s/article/K5903",
+    "extendable": false,
+    "note": "指 17.1.x（LTS，目前主力受支援版本）。K5903 表格：First customer ship 2023-03-14，EoSD/EoTS 2027-03-31，已直接核對頁面原文確認。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Cisco Network OS 16",
+    "eos_kind": "Last Date of Support (End of Life) — IOS XE 16.x",
+    "eos_date": "2026-02-28",
+    "source_url": "https://www.cisco.com/c/en/us/products/collateral/ios-nx-os-software/ios-xe-16/eos-eol-notice-c51-744154.html",
+    "extendable": false,
+    "note": "IOS XE 16.x 依子版本(train)各自發公告，Cisco NX-OS/IOS-XE/classic IOS 在本系統都被歸為同一個「Cisco Network OS」大類（normalize.py 尚未細分子產品），此鍵用大版號 16 概括。此填 16.12.x（16系列最後一個train，2020-08-19公告），實際盤點請對照子版本另查證。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Cisco Network OS 17",
+    "eos_kind": "Last Date of Support (End of Life) — IOS XE 17.x",
+    "eos_date": "2027-03-31",
+    "source_url": "https://www.cisco.com/c/en/us/products/collateral/ios-nx-os-software/ios-xe-17/ios-xe-17-3-x-eol.html",
+    "extendable": false,
+    "note": "此填 17.3.x（Catalyst 9000 常見部署train）。較新 train（17.9.x/17.12.x）尚未公告或更晚，較舊 train 更早結束。WebFetch被403擋下，改用WebSearch交叉多個第三方EOL追蹤站確認同一Cisco官方頁面內容。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Cisco Network OS 9",
+    "eos_kind": "Last Date of Support (End of Life) — NX-OS 9.x (Nexus 9000)",
+    "eos_date": "2025-10-31",
+    "source_url": "https://www.cisco.com/c/en/us/products/collateral/switches/nexus-9000-series-switches/nexus-3000-9000-releases-9-3x-eol.html",
+    "extendable": false,
+    "note": "此填 9.3(x)（9.x系列最後一個train，2022-04-10公告）。較早的 9.2(x) 已提前結束。",
+    "confidence": "confirmed"
+  },
+  {
+    "name": "Junos 15",
+    "eos_kind": "End of Support (EOS/EOL)",
+    "eos_date": "2018-12-05",
+    "source_url": "https://support.juniper.net/support/eol/software/junos/",
+    "extendable": false,
+    "note": "指 15.1 主線（含 15.1X53）。多款硬體平台/特定build有官方展延（如15.1X49在SRX展延至2021-06-30），實際EOL依裝的具體平台/build而異。官方頁為JS動態表格，本次工具無法重新開啟核對頁面原文，日期取自研究階段搜尋結果。",
+    "confidence": "unverified"
+  },
+  {
+    "name": "MySQL 8.0",
+    "eos_kind": "End of Premier/Extended Support（轉入Oracle Sustaining Support）",
+    "eos_date": "2026-04-21",
+    "source_url": "https://www.mysql.com/support/eol-notice.html",
+    "extendable": false,
+    "note": "官方原文：as of April 21, 2026, MySQL 8.0 is covered under Oracle Sustaining Support（不再提供安全修補/bug修復/效能改善）。官方建議升級至 8.4 LTS 或 9.7 LTS。",
+    "confidence": "confirmed"
+  }
+]
