@@ -1,0 +1,1702 @@
+<script setup lang="ts">
+// 納入管理＝把機器帶進系統的單一入口。頁面分兩段，順序就是實際工作順序：
+//   ①「開始收集」（決策 C4）：貼網段或 IP 清單按一下，系統自己選路
+//      （22→SSH／445→WinRM／活著但進不去→Push Agent／完全不通→只能匯入），
+//      給一張分得出「收到了」跟「要人工處理」的結果表。
+//   ②「登記成資產」：掃到了但沒登記的主機，補上業務欄位建成資產。
+// 表單依 /api/assets/field-meta 動態分區（功能分類）＋標層：
+//   tech(技術層) 有值→灰底唯讀自動帶；tech 沒值→可手動補；biz(業務層) 一律讓使用者填。
+interface FieldMeta { label: string; category: string; layer: 'tech' | 'biz'; required?: boolean; options?: string[]; new?: boolean; help?: string }
+interface Meta { categories: { key: string; label: string }[]; fields: Record<string, FieldMeta> }
+interface ScanHost {
+  ip: string; hostname: string | null; device_model: string | null; is_vm: number; segment: string | null
+  // S16 被動指紋：讓人在納管前先認得出這台大概是什麼
+  mac?: string | null; mac_vendor?: string | null; open_ports?: string | null; ttl?: number | null; os_guess?: string | null
+}
+interface DispatchRow {
+  ip: string; alive: number; open_ports: string | null; route: string; status: string
+  asset_serial: string | null; hostname: string | null; registered: number; message: string
+  not_onboardable_kind?: string | null
+  // 落在哪個頁簽——後端 collect_dispatch.dispatch_tab() 算的，前端不另判
+  tab?: string
+  // 人工指定過的話，留痕在這裡（誰／何時／原因／機器原本判什麼）。後端 summarize 寫回
+  os_override?: { by: string | null; at: string; reason: string | null
+                  auto_at_time: string | null; os_type: string; tab: string } | null
+  // 不納管的那一列「該走哪條收集路徑」——後端 collect_dispatch.nok_guidance() 算的
+  guide?: { kind: string; how: string | null; page: string | null
+            page_label: string | null; note?: string } | null
+  // 固定編號：這一輪結果裡的序號（排序／篩選都不變，口頭講「第 37 號」對得上）
+  no?: number
+}
+interface DispatchOut {
+  run?: { targets_raw: string | null; target_count: number; status: string; started_at: string | null; finished_at: string | null } | null
+  total: number; collected: number; needs_action: number; empty_addresses?: number
+  by_status: Record<string, number>; by_route: Record<string, number>
+  // 不納管的再依類別拆開。這一欄出現前跑的 run 會是空的（後端留 NULL，不填空）
+  not_onboardable_by_kind?: Record<string, number>
+  // 頁簽→台數（互斥、加總＝total）。畫面數字直接數每列的 tab，跟下鑽同一份
+  by_tab?: Record<string, number>
+  results: DispatchRow[]
+}
+
+const { apiFetch } = useApi()
+const { showToast } = useToast()
+const { copy } = useClipboard()
+
+const meta = ref<Meta | null>(null)
+const hosts = ref<ScanHost[]>([])
+const { sortKey, sortDir, toggle, sorted } = useSort(hosts, 'ip')
+const selected = ref<ScanHost | null>(null)
+const form = reactive<Record<string, any>>({})
+
+// 一鍵納管用共用元件 OnboardModal，這裡只管開關與成功後移除該筆
+const onboardHost = ref<ScanHost | null>(null)
+function openOnboard(h: ScanHost) { onboardHost.value = h }
+function onOnboarded() {
+  const ip = onboardHost.value!.ip
+  hosts.value = hosts.value.filter((x) => x.ip !== ip)
+  // 從收集結果表點納管成功的，那一列要當場翻成「已收到」——
+  // 不然畫面還停在「待佈身分」，人會以為沒成功又點一次
+  const row = dispatch.value?.results.find((r) => r.ip === ip)
+  if (row && dispatch.value) {
+    row.status = 'collected'
+    row.message = '已佈好收集帳號，現在收得到'
+    dispatch.value.collected += 1
+    dispatch.value.needs_action -= 1
+  }
+  onboardHost.value = null
+  loadAudit()
+  loadManaged()   // 剛納管（或重新納管）的那台要出現在／更新於下面的「已納管主機」表
+}
+const saving = ref(false)
+const submitAttempted = ref(false)
+
+function isMissing(key: string, required?: boolean) {
+  return submitAttempted.value && required && !form[key]
+}
+
+// ===== 納管紀錄 =====
+// 納管失敗時原本只看得到那一瞬間的 toast，關掉就沒了——但每一次嘗試其實都有寫進
+// onboard_audit（含階段、訊息、腳本輸出），只是從來沒有畫面（使用者 2026-08-16 問
+// 「失敗怎麼看 LOG」才發現）。沒有畫面等於要人 SSH 進去翻 DB 或 journalctl，
+// 跟這個系統的定位相反。
+interface OnboardAudit {
+  id: number; target_ip: string; platform: string | null; login_user: string | null
+  trigger: string; triggered_by: string | null; ok: number
+  stage: string | null; message: string | null; output: string | null; created_at: string
+}
+const audits = ref<OnboardAudit[]>([])
+const showAudit = ref(false)
+const openOutput = ref<number | null>(null)
+const { sortKey: aSortKey, sortDir: aSortDir, toggle: aToggle, sorted: aSorted } =
+  useSort(audits, 'id')
+async function loadAudit() {
+  try { audits.value = await apiFetch<OnboardAudit[]>('/api/onboard/audit') } catch { /* 沒紀錄就空著 */ }
+}
+// 紅框只攤開「還沒解決」的失敗：同一台之後已經納管成功過，那筆失敗就是過去式。
+// 2026-09-11 實際踩到：221 在 14:37 帳密錯失敗、14:51 重新納管成功，紅框卻一直掛著
+// 14:37 那筆，讓人以為還沒弄好。舊紀錄照樣留在「看全部」裡，不刪。
+// audits 是新到舊排序（id 大的在前），所以「之後成功」＝前面有同 IP 的成功紀錄。
+const lastFail = computed(() => {
+  const okLater = new Set<string>()
+  for (const a of audits.value) {
+    if (a.ok) { okLater.add(a.target_ip); continue }
+    if (!okLater.has(a.target_ip)) return a
+  }
+  return null
+})
+
+// ===== ①收集入口（決策 C4）=====
+const targets = ref('')
+
+// ===== 從網段配置表挑要收集的範圍（2026-09-15 使用者）=====
+// 「我雖然是測試網段，但我不知道要從哪裡開始收集。目前拿的是全網的網段，
+//   所以我應該要有一個『測試網段』的選擇功能……選機房、有哪些網段可以選。」
+// 網段配置表裡本來就有機房／環境／用途，先選環境再選機房，最後勾網段——
+// 不用背 10.99.x 是哪一段。資安註記排除的照列但不給勾，並寫明原因（不是靜默消失）。
+interface SegItem { cidr: string; label: string; scan_excluded: boolean; scan_note: string | null }
+interface SegEnvNode { environment: string; segments: SegItem[] }
+interface SegLocNode { location: string; environments: SegEnvNode[] }
+
+const segTree = ref<SegLocNode[]>([])
+const segEnv = ref('測試')          // 預設測試——正式/備援要納管得走 PAM，不是這裡的主戰場
+const segLoc = ref('')
+const segSel = ref<Set<string>>(new Set())
+const segOpen = ref(true)
+// 網段表的 scan_excluded 註記寫的是「**建議**排除掃描」（UAT環境／員工電腦／重複設備IP），
+// 那是給弱點掃描的建議，不等於禁止資產收集。221 實測：內湖 30 個測試段有 29 段帶這個註記，
+// 全部鎖死的話這個挑選器等於不能用（只剩 1 段）。
+// 所以預設只列可收集的，要勾那些得自己打開開關，而且每一列都寫明原因——
+// 讓人看得到理由再決定，不是替他決定，也不是靜默忽略註記。
+const segShowExcluded = ref(false)
+
+async function loadSegTree() {
+  try {
+    const r = await apiFetch<{ tree: SegLocNode[] }>('/api/segments/tree')
+    segTree.value = r.tree ?? []
+    if (!segEnvs.value.includes(segEnv.value)) segEnv.value = segEnvs.value[0] ?? ''
+  } catch { segTree.value = [] }   // 還沒匯網段配置表就不顯示這一區，不擋整頁
+}
+
+const segEnvs = computed(() => {
+  const s = new Set<string>()
+  for (const l of segTree.value) for (const e of l.environments) s.add(e.environment)
+  const order = ['測試', '正式', '備援']
+  return [...order.filter((x) => s.has(x)), ...[...s].filter((x) => !order.includes(x))]
+})
+const segLocs = computed(() =>
+  segTree.value.filter((l) => l.environments.some((e) => e.environment === segEnv.value))
+    .map((l) => l.location))
+const segList = computed<SegItem[]>(() => {
+  const loc = segTree.value.find((l) => l.location === segLoc.value)
+  return loc?.environments.find((e) => e.environment === segEnv.value)?.segments ?? []
+})
+const segVisible = computed(() =>
+  segShowExcluded.value ? segList.value : segList.value.filter((s) => !s.scan_excluded))
+const segPickable = computed(() => segVisible.value)
+const segExcludedCount = computed(() => segList.value.filter((s) => s.scan_excluded).length)
+watch([segEnv, segLocs], () => {
+  if (!segLocs.value.includes(segLoc.value)) segLoc.value = segLocs.value[0] ?? ''
+})
+function toggleSeg(cidr: string) {
+  const s = new Set(segSel.value)
+  if (s.has(cidr)) s.delete(cidr); else s.add(cidr)
+  segSel.value = s
+}
+function toggleAllSegs() {
+  segSel.value = segPickable.value.every((s) => segSel.value.has(s.cidr))
+    ? new Set()
+    : new Set(segPickable.value.map((s) => s.cidr))
+}
+// 加進上面的輸入框（不是直接開跑）：使用者還能自己加減、也看得到「約幾台」再決定
+function addSelectedSegs() {
+  if (!segSel.value.size) { showToast('先勾要收集的網段', 'warn'); return }
+  const have = new Set(targets.value.split(/[\s,;]+/).filter(Boolean))
+  const add = [...segSel.value].filter((c) => !have.has(c))
+  targets.value = [...targets.value.split(/[\s,;]+/).filter(Boolean), ...add].join('\n')
+  showToast(`已加入 ${add.length} 個網段`, 'success')
+  segSel.value = new Set()
+}
+const dispatching = ref(false)
+// 同「一鍵納管」那顆的問題：只變灰看不出在不在跑。這裡台數是算得出來的，
+// 所以講得更具體——幾台、跑多久、每台大概多久。仍然不做假的百分比進度：
+// 後端是一次呼叫，中途沒有真的可回報的節點。
+const dElapsed = ref(0)
+let dTicker: ReturnType<typeof setInterval> | null = null
+// 目標數量：本地照 parse 規則粗估（CIDR 展開、a.b.c.d-e 範圍、單一 IP）。
+// 只用來讓人心裡有數，真正的解析與上限在後端。
+const targetCount = computed(() => {
+  let n = 0
+  for (const tok of targets.value.split(/[\s,;]+/)) {
+    if (!tok) continue
+    const cidr = tok.match(/^\d+\.\d+\.\d+\.\d+\/(\d+)$/)
+    if (cidr) { const bits = 32 - Number(cidr[1]); n += Math.max(2 ** bits - 2, 1); continue }
+    const range = tok.match(/^\d+\.\d+\.\d+\.(\d+)-(\d+)$/)
+    if (range) { n += Math.max(Number(range[2]) - Number(range[1]) + 1, 0); continue }
+    n += 1
+  }
+  return n
+})
+const dispatch = ref<DispatchOut | null>(null)
+// 舊版後端沒有 tab 就退回照 route 分（不會比以前更糟）
+const dispatchRows = computed<DispatchRow[]>(() =>
+  (dispatch.value?.results ?? []).map((r, i) => ({ ...r, no: i + 1, tab: r.tab || r.route })))
+const { sortKey: dSortKey, sortDir: dSortDir, toggle: dToggle, sorted: dSorted } =
+  useSort(dispatchRows, 'ip')
+
+// ===== 走哪條路：篩選（A14）=====
+// 掃一個 /24 會有一兩百列，其中大半是「只能匯入」——完全不通的空 IP，
+// 沒按鈕也沒下一步，只會把真正能動的那幾台淹掉。預設收起來。
+//
+// 但**絕不靜默藏**：藏了幾台一定要寫在畫面上。不然「只有 3 台」會被讀成
+// 「這個網段只有 3 台機器」，那比不篩還糟。
+//
+// 2026-10-13：頁簽不再照 route 分。「SSH 收集」裡混著儲存設備、Aruba 等網路設備、
+// VMware Photon OS——都開 22 所以 route=ssh，但結果欄全是「不納管」。
+// 現在照後端算好的 `tab`（collect_dispatch.dispatch_tab）：不納管的依類別拆成
+// 儲存設備／網路設備／ESXi／其他不納管，SSH 收集只剩真正能走 SSH 收集的。
+// 每台只落一個頁簽，各頁簽加總＝全部（tests/asset_module/test_adopt_tabs.py 釘住）。
+type DTab = 'ssh' | 'winrm' | 'agent' | 'storage' | 'network' | 'esxi' | 'nok_other' | 'import'
+const ACTIONABLE_TABS: DTab[] = ['ssh', 'winrm', 'agent']
+const NOK_TABS: { tab: DTab; label: string }[] = [
+  { tab: 'storage', label: '儲存設備' }, { tab: 'network', label: '網路設備' },
+  { tab: 'esxi', label: 'ESXi' }, { tab: 'nok_other', label: '其他（另有方式）' },
+]
+const dRoute = ref<'actionable' | 'all' | DTab>('actionable')
+// 數字跟下鑽用同一份：頁簽數字直接數 tab，跟 dVisible 的篩選條件一模一樣
+const dRouteCount = computed(() => {
+  const c: Record<string, number> = {}
+  for (const r of dispatchRows.value) c[r.tab!] = (c[r.tab!] ?? 0) + 1
+  return c
+})
+const dActionableCount = computed(() =>
+  ACTIONABLE_TABS.reduce((n, t) => n + (dRouteCount.value[t] ?? 0), 0))
+const dNokCount = computed(() =>
+  NOK_TABS.reduce((n, t) => n + (dRouteCount.value[t.tab] ?? 0), 0))
+
+// ===== SSH 這條路裡其實是 Windows 的那幾台（2026-10-13）=====
+// 這個頁簽原本寫「SSH 收集（Linux）」，但那個「（Linux）」是標籤自己加的——
+// choose_route() **刻意只決定走哪條路、從不判平台**（22 開著就走 SSH，即使那是
+// Windows，因為服務盤點／帳號盤點只有 SSH 這條路）。於是裝了 OpenSSH 的 Windows
+// （開放埠長得像 `22 445 3389 5985`）全被算進「SSH 收集（Linux）」，使用者原話：
+// 「這一看就是 WINDOWS 的只是她有安裝 openssh」。拿 Linux 腳本去打它一定失敗，
+// 而且失敗訊息長得像帳號問題（帳號進不去），害人去查錯方向。
+//
+// 所以修的是標籤不是路由：route 照舊走 ssh，只在畫面上標出哪幾台是 Windows，
+// 讓人按「⚡ 一鍵納管」前就知道別選 Linux 腳本。
+//
+// 埠號定義跟後端 backend/fingerprint.py 的 WINDOWS_ONLY_PORTS 對齊，不自己發明一套。
+// ⚠️ **445 不算**：Linux 裝 Samba 一樣會開 445，拿它當 Windows 證據會把檔案
+// 伺服器誤判成 Windows。
+const WINDOWS_ONLY_PORTS = [3389, 5985]
+function isWindowsOnSsh(r: DispatchRow): boolean {
+  if (r.tab !== 'ssh' || !r.open_ports) return false
+  const ports = r.open_ports.split(',').map((p) => Number(p.trim()))
+  return WINDOWS_ONLY_PORTS.some((p) => ports.includes(p))
+}
+const dSshWindowsCount = computed(() => dispatchRows.value.filter(isWindowsOnSsh).length)
+
+const dHiddenCount = computed(() =>
+  dRoute.value === 'actionable' ? (dRouteCount.value.import ?? 0) : 0)
+const dHiddenNok = computed(() => dRoute.value === 'actionable' ? dNokCount.value : 0)
+const dVisible = computed(() => {
+  if (dRoute.value === 'all') return dSorted.value
+  if (dRoute.value === 'actionable') return dSorted.value.filter((r) => ACTIONABLE_TABS.includes(r.tab as DTab))
+  return dSorted.value.filter((r) => r.tab === dRoute.value)
+})
+
+// 批次試密碼（方案B）：只有「要憑證的 SSH 那批」勾得起來——其他路（Agent／
+// 只能匯入）給帳密也沒用。勾選狀態不跨頁刷新保留，重新收集一次就清空重選。
+// ⚠️ 這個條件同時也是「⚡ 一次納管」的可勾條件，是防誤納管的第一道鎖：
+// probeSelected 只可能被通過 canProbe 的列填進去（見下面 pickMode 的說明）。
+function canProbe(r: DispatchRow): boolean {
+  return r.status === 'needs_credential' && r.route === 'ssh'
+}
+const probeSelected = ref<Set<string>>(new Set())
+// 「全選」只選看得見的——篩到 WinRM 時卻幫你勾了看不見的 SSH 那批，會很難解釋
+const probeableRows = computed(() => dVisible.value.filter(canProbe))
+const allProbeableSelected = computed(() =>
+  probeableRows.value.length > 0 && probeableRows.value.every((r) => probeSelected.value.has(r.ip)))
+function toggleProbe(ip: string) {
+  const s = new Set(probeSelected.value)
+  if (s.has(ip)) s.delete(ip); else s.add(ip)
+  probeSelected.value = s
+}
+function toggleAllProbeable() {
+  probeSelected.value = allProbeableSelected.value ? new Set() : new Set(probeableRows.value.map((r) => r.ip))
+}
+const showBatchProbe = ref(false)
+
+// ===== 「那它走哪條路」：不納管 ≠ 不管（2026-10-16）=====
+// 使用者：「網路設備／ESXi／儲存 這些都有它獨立納管方式」「不是靠 Linux 方式納管」。
+// 以前那三台 ESXi 的「走哪條路」寫 Push Agent（route 是探測事實）、「下一步」寫
+// 「不納管」——兩個都在誤導。現在改成**指路**：該走哪一頁就寫哪一頁，並附上選單編號。
+//
+// ⚠️ 選單編號**現查不寫死**：編號是 `numberNav` 依「使用者存的版面＋功能開關」
+// 當場算出來的（預設 2-4 SAN 收集／2-5 HMC 收集，但使用者在「選單編輯」調過順序、
+// 或某個 mod 被關掉，編號就會變）。寫死會變成叫人去看一個不存在的編號。
+const { visibleNav, loadNavLayout } = useVisibleNav()
+onMounted(loadNavLayout)
+function navNoOf(to: string): string {
+  for (const g of visibleNav.value) for (const it of g.items) if (it.to === to) return it.no || ''
+  return ''
+}
+/** 給人看的「X-Y 頁名」；那一頁現在看不到（功能開關關掉）就只回頁名。 */
+function guideWhere(r: DispatchRow): string {
+  const g = r.guide
+  if (!g?.page || !g.page_label) return ''
+  const no = navNoOf(g.page)
+  return no ? `${no} ${g.page_label}` : g.page_label
+}
+
+// ===== 手動搬到別的頁簽（2026-10-16）=====
+// 使用者在公司機 1.428.0：「我還是沒看到可以移動到其他組別的方式」「圖二不能勾選，不能全選」。
+// 實例：`SVR019-203` 是一般伺服器，但資產登記的「作業系統」欄寫「儲存設備」，
+// 於是被歸到儲存設備頁簽。自動分類一定有錯的時候，人要能自己改。
+//
+// 寫的是**既有的** os_type_override 表（後端 os_override.py，2026-09-18 就做好了：
+// 重匯 CIA 不沖掉、留誰／何時／原因／機器原判、取消是軟刪除）。資產明細頁那個入口
+// 保留，兩邊寫同一張表——這裡只是把入口也放到使用者真正看到問題的地方。
+//
+// ⚠️ 安全邊界（使用者拍板）：搬成「SSH 收集」只影響顯示與試連，**不會**讓系統自動
+// 去那台建本機帳號；建帳號維持要人按「⚡ 一鍵納管」，而那條路的白名單讀資產登記的
+// 作業系統欄，完全不看這張表（tests/asset_module/test_adopt_move.py 釘住）。
+interface MoveChoice { tab: string; label: string; os_type: string; onboardable: boolean }
+const moveChoices = ref<MoveChoice[]>([])
+async function loadMoveChoices() {
+  try {
+    const r = await apiFetch<{ items: MoveChoice[] }>('/api/adopt/move-choices')
+    moveChoices.value = r.items || []
+  } catch { moveChoices.value = [] }
+}
+onMounted(loadMoveChoices)
+
+// 認不出是哪一台的搬不了：os_override 要「主機名＋IP」或「資產序號」才認台
+//（machine_key；缺了就會變成所有未登記 IP 共用一個鍵，一改全改）。
+// **不靜默 disable**：按鈕 title 會寫明為什麼不能搬。
+function canMove(r: DispatchRow): boolean {
+  return Boolean((r.hostname && r.ip) || r.asset_serial)
+}
+function whyCannotMove(r: DispatchRow): string {
+  return canMove(r) ? '' : '這個 IP 資產庫沒有登記（沒有主機名也沒有序號）——認不出是哪一台，'
+    + '搬了會套到所有未登記的位址上。請先在「登記成資產」把它登記起來。'
+}
+
+// ===== 勾選要拿來做什麼：畫面上明說，不再由「你在哪個頁簽」暗示（2026-10-16 第二版）=====
+//
+// 使用者在公司機 1.429.0 勾了 4 台 Windows+OpenSSH 想一次搬到 WinRM 收集：
+// 「**我沒辦法一次改**」。因為第一版把勾選的用途綁死在頁簽上——能動的三頁（SSH／
+// WinRM／Push Agent）的勾選固定是「試密碼／一次納管」，所以那三頁沒有批次搬移。
+//
+// 現在改成**明寫的模式切換**（「勾選後要做什麼：🔑 佈收集帳號 ／ 📁 搬移分類」），
+// 每一個頁簽都切得過去，所以每一頁都能批次搬移。
+//
+// 防誤納管（使用者拍板的紅線：「勾了一批想搬移，結果按到一次納管」絕對不能發生）
+// 靠三道獨立的鎖，不是靠按鈕 disabled：
+//   1. **兩組勾選、兩個 Set**：搬移勾的進 `moveSelected`，試密碼勾的進 `probeSelected`，
+//      而「⚡ 一次納管」送出的永遠只有 `probeSelected`。搬移模式下那個 Set 必定是空的。
+//   2. **按鈕按模式整個不存在**：搬移模式下「🔑 批次試密碼」「⚡ 一次納管」**不 render**
+//      （v-if，不是 disabled）——沒有東西可以誤按。
+//   3. **換模式／換頁簽一律清空兩個 Set**：勾選不會從一個用途漂到另一個用途，
+//      也不會留著看不見的勾選（看不見的勾選是最容易誤送的）。
+//   另外第一道鎖的可勾條件本身就不同：試密碼只有 `needs_credential + route=ssh`
+//   勾得起來（canProbe），搬移只要認得出是哪一台就能勾（canMove）。
+//
+// 每一列的「改分類」按鈕在所有頁簽、所有模式都在，單台搬移不受模式影響。
+type PickMode = 'onboard' | 'move'
+const pickMode = ref<PickMode>('onboard')
+//: 這一頁有沒有「佈收集帳號」做得到的對象。沒有就不給切過去（並寫明原因，不靜默 disable）
+const canOnboardHere = computed(() => probeableRows.value.length > 0)
+//: 實際生效的模式：選了「佈收集帳號」但這一頁根本沒有那種機器時自動落回搬移，
+//: 不然在儲存設備頁會看到一個什麼都做不了的空工具列。
+const effPickMode = computed<PickMode>(() =>
+  (pickMode.value === 'onboard' && !canOnboardHere.value) ? 'move' : pickMode.value)
+const moveMode = computed(() => effPickMode.value === 'move')
+const moveSelected = ref<Set<string>>(new Set())
+const movableRows = computed(() => dVisible.value.filter(canMove))
+const allMovableSelected = computed(() =>
+  movableRows.value.length > 0 && movableRows.value.every((r) => moveSelected.value.has(r.ip)))
+function toggleMove(ip: string) {
+  const s = new Set(moveSelected.value)
+  if (s.has(ip)) s.delete(ip); else s.add(ip)
+  moveSelected.value = s
+}
+function toggleAllMovable() {
+  moveSelected.value = allMovableSelected.value ? new Set() : new Set(movableRows.value.map((r) => r.ip))
+}
+//: 清空兩個 Set（鎖 3）。換頁簽、換模式、搬完都走這一支，不要各寫各的。
+function clearPicks() {
+  moveSelected.value = new Set()
+  probeSelected.value = new Set()
+}
+// 換頁簽就清空，並把模式帶回預設（能佈帳號的頁簽預設佈帳號，其餘自動落回搬移）
+watch(dRoute, () => { clearPicks(); pickMode.value = 'onboard' })
+// 換模式也清空：勾選絕對不可以跨用途帶過去
+watch(effPickMode, clearPicks)
+
+// 搬移對話框。rows 是這次要搬的那幾列（單台＝一列，批次＝勾選的那些）
+const moveRows = ref<DispatchRow[]>([])
+const moveTab = ref('')
+const moveReason = ref('')
+const moveBusy = ref(false)
+function openMove(rows: DispatchRow[]) {
+  moveRows.value = rows.filter(canMove)
+  moveTab.value = ''
+  moveReason.value = ''
+}
+const moveTargetChoices = computed(() => {
+  // 這批全都已經在同一個頁簽的話，不用再搬到同一個頁簽（批次也適用，不只單台）
+  const tabs = new Set(moveRows.value.map((r) => r.tab))
+  const only = tabs.size === 1 ? [...tabs][0] : null
+  return moveChoices.value.filter((c) => c.tab !== only)
+})
+async function submitMove(restore = false) {
+  if (!moveRows.value.length) return
+  if (!restore && !moveTab.value) return
+  moveBusy.value = true
+  try {
+    const out = await apiFetch<{ moved: string[]; failed: { ip: string; error: string }[] }>(
+      '/api/adopt/move-tab', {
+        method: 'POST',
+        body: {
+          targets: moveRows.value.map((r) => ({
+            ip: r.ip, hostname: r.hostname, asset_serial: r.asset_serial,
+          })),
+          tab: restore ? null : moveTab.value,
+          reason: moveReason.value.trim() || null,
+        },
+      })
+    const label = restore ? '機器自動判定'
+      : (moveChoices.value.find((c) => c.tab === moveTab.value)?.label ?? moveTab.value)
+    if (out.moved.length) showToast(`已搬 ${out.moved.length} 台到「${label}」`, 'success')
+    // 失敗的逐筆講，不要只說「部分失敗」
+    for (const f of out.failed) showToast(`${f.ip} 搬不了：${f.error}`, 'error')
+    moveRows.value = []
+    clearPicks()
+    await refreshDispatchQuiet()   // 頁簽數字與每一列的歸屬都由後端算，前端不自己挪列
+  } catch (e: any) {
+    showToast(`搬移失敗：${e?.data?.detail ?? e?.message ?? e}`, 'error')
+  } finally {
+    moveBusy.value = false
+  }
+}
+function overrideTitle(r: DispatchRow): string {
+  const o = r.os_override
+  if (!o) return ''
+  const from = o.auto_at_time ? `機器原本判「${o.auto_at_time}」，` : ''
+  return `人工指定：${from}改成「${o.os_type}」（${TAB_LABEL_MAP[o.tab] ?? o.tab} 頁簽）`
+    + `　${o.by ?? '不詳'} 於 ${o.at}${o.reason ? `　原因：${o.reason}` : ''}`
+}
+const TAB_LABEL_MAP: Record<string, string> = {
+  ssh: 'SSH 收集', winrm: 'WinRM 收集', agent: 'Push Agent',
+  storage: '儲存設備', network: '網路設備', esxi: 'ESXi',
+  nok_other: '其他（另有方式）', import: '只能匯入',
+}
+
+// ===== 勾選多台一次納管（使用者 2026-09-11）=====
+// 兩張表各自勾：上面「收集結果」要憑證的那批（跟批次試密碼共用同一組勾選），
+// 下面「登記成資產」的候選清單。兩邊都送進同一個 BatchOnboardModal，
+// 每台走的是跟「⚡ 一鍵納管」同一支 API——等於幫你每台各點一次。
+const adoptSelected = ref<Set<string>>(new Set())
+const allAdoptSelected = computed(() =>
+  sorted.value.length > 0 && sorted.value.every((h) => adoptSelected.value.has(h.ip)))
+function toggleAdopt(ip: string) {
+  const s = new Set(adoptSelected.value)
+  if (s.has(ip)) s.delete(ip); else s.add(ip)
+  adoptSelected.value = s
+}
+function toggleAllAdopt() {
+  adoptSelected.value = allAdoptSelected.value ? new Set() : new Set(sorted.value.map((h) => h.ip))
+}
+const batchOnboardIps = ref<string[] | null>(null)
+function onBatchOnboarded(okIps: string[]) {
+  const ok = new Set(okIps)
+  hosts.value = hosts.value.filter((h) => !ok.has(h.ip))
+  for (const r of dispatch.value?.results ?? []) {
+    if (ok.has(r.ip) && r.status !== 'collected' && dispatch.value) {
+      r.status = 'collected'
+      r.message = '已佈好收集帳號，現在收得到'
+      dispatch.value.collected += 1
+      dispatch.value.needs_action -= 1
+    }
+  }
+  probeSelected.value = new Set([...probeSelected.value].filter((ip) => !ok.has(ip)))
+  adoptSelected.value = new Set([...adoptSelected.value].filter((ip) => !ok.has(ip)))
+  managedSelected.value = new Set([...managedSelected.value].filter((ip) => !ok.has(ip)))
+  loadAudit()
+  loadManaged()
+}
+
+// ===== 已納管主機（使用者 2026-09-11：「重新納管、取消納管、已納管、編輯應該放在手動登記旁邊」→ YES）=====
+// 上面「登記成資產」只列還沒登記的主機，已納管的根本不在那裡，所以另開一張表。
+// 資料用 /api/manage-state（儀表板四格與資產清單共用的同一份四態判定），不另算一套。
+// 用途：一千多台要補佈 v1.93 起才有的帳號盤點輔助程式——全選、輸入一次密碼就好。
+interface ManagedHost {
+  asset_serial: string | null; hostname: string | null; ip: string
+  state: string; collect_checked_at: string | null; os_type?: string
+}
+const managed = ref<ManagedHost[]>([])
+const managedKw = ref('')
+const managedOs = ref('')   // '' ＝全部；Linux／Windows／AIX 二次篩選（同一種 OS 一次補佈）
+async function loadManaged() {
+  try {
+    const r = await apiFetch<{ items: ManagedHost[] }>('/api/manage-state')
+    managed.value = (r.items || []).filter((x) => x.state === '已納管' && x.ip)
+  } catch { managed.value = [] }
+}
+onMounted(loadManaged)
+onMounted(loadSegTree)   // 網段配置表（開始收集要用它挑範圍）
+// 各 OS 現有幾台（篩選鈕上顯示數字，也決定哪些鈕要出現——沒有 AIX 就不長 AIX 鈕）
+const managedOsCounts = computed(() => {
+  const c: Record<string, number> = {}
+  for (const m of managed.value) c[m.os_type || '未填'] = (c[m.os_type || '未填'] || 0) + 1
+  return c
+})
+const managedShown = computed(() => {
+  const k = managedKw.value.trim().toLowerCase()
+  const os = managedOs.value
+  return managed.value.filter((m) => {
+    if (os && (m.os_type || '未填') !== os) return false
+    if (!k) return true
+    return [m.ip, m.hostname, m.asset_serial].some((v) => (v || '').toLowerCase().includes(k))
+  })
+})
+const { sortKey: mKey, sortDir: mDir, toggle: mToggle, sorted: mSorted } = useSort(managedShown, 'ip')
+const managedSelected = ref<Set<string>>(new Set())
+// 全選只選看得見的（搜尋篩過之後的那批）——同上面兩張表的規則
+const allManagedSelected = computed(() =>
+  mSorted.value.length > 0 && mSorted.value.every((m) => managedSelected.value.has(m.ip)))
+function toggleManaged(ip: string) {
+  const s = new Set(managedSelected.value)
+  if (s.has(ip)) s.delete(ip); else s.add(ip)
+  managedSelected.value = s
+}
+function toggleAllManaged() {
+  managedSelected.value = allManagedSelected.value ? new Set() : new Set(mSorted.value.map((m) => m.ip))
+}
+const revokeIp = ref<string | null>(null)
+function onRevoked() {
+  revokeIp.value = null
+  loadManaged()
+  loadAudit()
+}
+
+const ROUTE_LABEL: Record<string, string> = {
+  ssh: 'SSH 收集', winrm: 'WinRM 收集', agent: 'Push Agent', import: '只能匯入',
+}
+const STATUS_LABEL: Record<string, string> = {
+  // 「不納管」會被讀成「這台不用管了」——實際上是不走 Linux 那套（SSH 建本機帳號），
+  // 各自另有收集路徑（下一步欄會寫是哪一條）。跟後端 collect_dispatch.STATUS_LABEL 同一個字。
+  collected: '已納管', not_onboardable: '另有納管方式', needs_credential: '待佈身分', needs_agent: '待裝 Agent',
+  import_only: '只能匯入', failed: '收集失敗',
+}
+// 不納管的類別（後端 onboard_eligibility 的 kind）→ 方塊底下的短標籤。
+// 這裡刻意用短字而不是後端給人看的完整標籤（「設備（不在可納管作業系統清單）」）——
+// 方塊底下塞不進一句話，長標籤留給逐列的 message。
+const NOK_KIND_LABEL: Record<string, string> = {
+  storage: '儲存', network: '網路', esxi: 'ESXi', appliance: '設備', immutable: 'OpenShift', banner: 'banner 自報',
+}
+// 顯示順序固定，不跟著台數多寡跳動：使用者在找「儲存幾台」，
+// 每次重跑都換位置的話他得重新找一次。不在這張表裡的類別排最後。
+// 方塊底下的類別小計點下去＝跳到對應頁簽（下鑽）。不在這張表的類別都在「其他不納管」
+const NOK_KIND_TAB: Record<string, DTab> = { storage: 'storage', network: 'network', esxi: 'esxi' }
+const NOK_KIND_ORDER = ['storage', 'network', 'esxi', 'appliance', 'immutable', 'banner']
+
+// 「不納管」是一個合計數字，使用者看不出其中幾台是儲存設備（2026-10-13
+// 原話：「是 storage 你怎麼抓不出來，可把 storage 獨立分類出來」）。
+// 數字 0 的類別不列——沒有就是沒有，列一排 0 等於要人自己過濾。
+const nokKinds = computed<{ kind: string; label: string; n: number }[]>(() => {
+  const m = dispatch.value?.not_onboardable_by_kind ?? {}
+  const keys = Object.keys(m).filter((k) => (m[k] ?? 0) > 0)
+  keys.sort((a, b) => {
+    const ia = NOK_KIND_ORDER.indexOf(a), ib = NOK_KIND_ORDER.indexOf(b)
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b)
+  })
+  return keys.map((k) => ({ kind: k, label: NOK_KIND_LABEL[k] || k, n: m[k] ?? 0 }))
+})
+
+// 綠＝這台現在收得到；黃＝人做一件事就能收到；灰＝這條路走不通，只能靠匯入
+const STATUS_TONE: Record<string, string> = {
+  collected: 'ok', needs_credential: 'warn', needs_agent: 'warn',
+  failed: 'bad', import_only: 'off', not_onboardable: 'off',
+}
+
+// 下面的主機清單要看得出「這台上次收集的結果」（2026-09-16 使用者：
+// 「收集完後，失敗或成功我也不曉得，因為在下面的主機我也看不出來」）。
+// 上面的結果表是「這一輪跑了什麼」，下面的候選清單是「還有哪些要處理」——
+// 兩張表對不起來時，人就得自己用 IP 一筆一筆比對。
+const dispatchByIp = computed<Record<string, any>>(() => {
+  const m: Record<string, any> = {}
+  for (const r of dispatch.value?.results ?? []) m[r.ip] = r
+  return m
+})
+const lastRunAt = computed(() => dispatch.value?.run?.finished_at || dispatch.value?.run?.started_at || '')
+
+// 失敗要留在畫面上（2026-09-15 使用者：「失敗都沒有任何輸出，根本不知道錯在哪裡」）——
+// toast 幾秒就消失，而且等很久的請求可能被網路中斷、後端其實還在跑。
+const dispatchError = ref('')
+const logRef = ref<{ reload: () => void } | null>(null)
+async function reloadLatest() {
+  try {
+    dispatch.value = await apiFetch<DispatchOut>('/api/collect/dispatch/latest')
+    dispatchError.value = ''
+    showToast('已載入上次的收集結果', 'success')
+  } catch (e: any) {
+    showToast(`載入失敗：${e?.data?.detail || e?.message || '未知錯誤'}`, 'error')
+  }
+}
+
+// 搬移之後重讀：頁簽歸屬與數字全由後端 summarize 算，前端不自己把列搬來搬去——
+// 不然畫面上的數字跟下次重新整理會不一樣。不發 toast（搬移自己已經報過了）。
+async function refreshDispatchQuiet() {
+  try { dispatch.value = await apiFetch<DispatchOut>('/api/collect/dispatch/latest') } catch { /* 讀不到就維持畫面 */ }
+}
+
+// 自動分批（2026-09-16 使用者：「你應該幫我自動分」「你有分批嗎?」）。
+// 超過一批的量後端會在背景跑並馬上回 {started:true}，這裡改成輪詢進度——
+// 以前同步等結果，1270 台一定被 HTTP 逾時切斷，畫面顯示「收集沒有完成（跑了 0 秒）」。
+const batchInfo = ref<{ gap_seconds: number; batch_size: number; hard_max: number } | null>(null)
+const progress = ref<{ batch_done: number; batch_total: number; done_count: number; total: number } | null>(null)
+let pollTimer: any = null
+
+// 納管失敗清單
+const runtimeConfig = useRuntimeConfig()
+const failures = ref<any[]>([])
+const failSummary = ref<{ by_reason: Record<string, number>; credential: number }>(
+  { by_reason: {}, credential: 0 })
+const failOpen = ref(false)
+async function loadFailures() {
+  try {
+    const r = await apiFetch<any>('/api/onboard/failures')
+    failures.value = r.items ?? []
+    failSummary.value = r.summary ?? { by_reason: {}, credential: 0 }
+  } catch (e: any) {
+    failures.value = []
+    showToast(`納管失敗清單載入失敗：${e?.data?.detail ?? e?.message ?? '未知錯誤'}`, 'error')
+  }
+}
+onMounted(loadFailures)
+
+async function loadBatchInfo() {
+  try { batchInfo.value = await apiFetch('/api/collect/dispatch/gap') } catch { /* 舊版後端沒有這支 */ }
+}
+onMounted(loadBatchInfo)
+
+async function saveGap(minutes: number) {
+  try {
+    await apiFetch('/api/collect/dispatch/gap',
+                   { method: 'PUT', body: { gap_seconds: Math.round(minutes * 60) } })
+    await loadBatchInfo()
+    showToast(`批次間隔已改成 ${minutes} 分鐘`, 'success')
+  } catch (e: any) {
+    showToast(`儲存失敗：${e?.data?.detail ?? e?.message}`, 'error')
+  }
+}
+
+function stopPolling() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+}
+
+async function pollUntilDone() {
+  const r = await apiFetch<any>('/api/collect/dispatch/latest')
+  const run = r?.run
+  if (!run) return
+  progress.value = {
+    batch_done: run.batch_done ?? 0, batch_total: run.batch_total ?? 1,
+    done_count: run.done_count ?? 0, total: run.target_count ?? 0,
+  }
+  if (run.status === 'running') return
+  dispatch.value = r
+  stopPolling()
+  dispatching.value = false
+  if (dTicker) { clearInterval(dTicker); dTicker = null }
+  if (run.status === 'failed') {
+    dispatchError.value = `收集沒有完成：${run.error || '後端沒有留下原因'}`
+    showToast('收集失敗，看下方「開始收集紀錄」', 'error', 12000)
+  } else {
+    showToast(`完成：收到 ${r.collected} 台，${r.needs_action} 台要人工處理`,
+              r.needs_action ? 'warn' : 'success')
+  }
+  await load()
+  logRef.value?.reload()
+}
+
+async function runDispatch() {
+  if (dispatching.value) return
+  dispatchError.value = ''
+  if (!targets.value.trim()) { showToast('請先輸入網段或 IP 清單', 'warn'); return }
+  dispatching.value = true
+  dElapsed.value = 0
+  dTicker = setInterval(() => { dElapsed.value += 1 }, 1000)
+  showToast('開始收集：探測中，連得上的會直接進去收，可能要一段時間', 'info')
+  try {
+    const out = await apiFetch<any>('/api/collect/dispatch', {
+      method: 'POST', body: { targets: targets.value },
+    })
+    if (out?.started) {
+      // 背景跑：畫面改成顯示進度，每 5 秒問一次後端跑到哪。這一頁可以離開，回來還看得到。
+      progress.value = { batch_done: 0, batch_total: out.batch_total, done_count: 0, total: out.total }
+      showToast(`${out.total} 台已自動分成 ${out.batch_total} 批（每批最多 ${out.batch_size} 台、`
+        + `間隔 ${Math.round(out.gap_seconds / 60)} 分鐘），背景執行中`, 'info', 14000)
+      pollTimer = setInterval(() => { pollUntilDone().catch(() => {}) }, 5000)
+      return           // 還在跑，不要收掉 dispatching
+    }
+    dispatch.value = out
+    const d = dispatch.value
+    if (d.needs_action === 0) showToast(`完成：${d.collected} 台全部收到`, 'success')
+    else showToast(`完成：收到 ${d.collected} 台，${d.needs_action} 台要人工處理`, 'warn')
+    await load()   // 有的機器狀態變了，候選清單要跟著更新
+    dispatching.value = false
+    if (dTicker) { clearInterval(dTicker); dTicker = null }
+    logRef.value?.reload()
+  } catch (e: any) {
+    const why = e?.data?.detail || e?.message || '沒有回應'
+    dispatchError.value = `收集沒有完成（跑了 ${dElapsed.value} 秒）：${why}`
+    showToast(`收集失敗：${why}`, 'error')
+    dispatching.value = false
+    if (dTicker) { clearInterval(dTicker); dTicker = null }
+    logRef.value?.reload()
+  }
+}
+onBeforeUnmount(() => { if (dTicker) clearInterval(dTicker); stopPolling() })
+
+// 重新整理回來時，如果後端還在跑，接著輪詢（不然使用者會以為斷了）
+onMounted(async () => {
+  try {
+    const r = await apiFetch<any>('/api/collect/dispatch/latest')
+    if (r?.run?.status === 'running') {
+      dispatching.value = true
+      pollTimer = setInterval(() => { pollUntilDone().catch(() => {}) }, 5000)
+    }
+  } catch { /* 沒跑過就算了 */ }
+})
+
+// 要請人裝 agent 的那批：產安裝包給他帶過去
+const pkg = ref<any>(null)
+const pkgBusy = ref(false)
+const pkgCopied = ref(false)
+async function getPackage(ip: string) {
+  if (pkgBusy.value) return
+  pkgBusy.value = true
+  try {
+    pkg.value = await apiFetch<any>('/api/collect/agent-package', { method: 'POST', body: { ip } })
+  } catch (e: any) {
+    showToast(`取得安裝包失敗：${e?.data?.detail || '請稍後重試'}`, 'error')
+  } finally {
+    pkgBusy.value = false
+  }
+}
+async function copyPkgScript() {
+  try {
+    const ok = await copy(pkg.value?.files?.['bootstrap_watcher.sh'] ?? '')
+  if (!ok) showToast('複製失敗，請直接選取下方腳本內容複製', 'warn', 8000)
+    pkgCopied.value = true
+    setTimeout(() => (pkgCopied.value = false), 2000)
+  } catch { showToast('複製失敗，請手動選取', 'warn') }
+}
+
+async function load() {
+  ;[meta.value, hosts.value] = await Promise.all([
+    apiFetch<Meta>('/api/field-meta'),
+    apiFetch<ScanHost[]>('/api/scan/unregistered'),
+  ])
+}
+await load()
+// 上一次的結果還原回來——這動作要等數十秒，做完一重新整理就沒了等於白等
+try { dispatch.value = await apiFetch<DispatchOut>('/api/collect/dispatch/latest') } catch { /* 沒跑過就空著 */ }
+await loadAudit()
+if (dispatch.value && !dispatch.value.results.length) dispatch.value = null
+
+function fieldsOf(catKey: string) {
+  if (!meta.value) return []
+  return Object.entries(meta.value.fields)
+    .filter(([, f]) => f.category === catKey)
+    .map(([key, f]) => ({ key, ...f }))
+}
+
+function openAdopt(host: ScanHost) {
+  selected.value = host
+  Object.keys(form).forEach((k) => delete form[k])
+  // 技術層：從掃描結果自動帶入現有的（其餘 OS/序號/MAC 待 facts 收集，先空著可手補）
+  form.ip = host.ip
+  form.hostname = host.hostname ?? ''
+  form.subnet = host.segment ?? ''
+  if (host.mac) form.mac = host.mac
+  if (host.is_vm) form.is_vm = 'VM'
+}
+
+async function submitAdopt() {
+  submitAttempted.value = true
+  if (!form.asset_purpose || !form.environment) {
+    showToast('請填紅框的必填欄位：資產用途、環境別', 'warn')
+    return
+  }
+  saving.value = true
+  try {
+    await apiFetch('/api/assets/adopt', { method: 'POST', body: { fields: { ...form } } })
+    showToast(`已納入管理：${selected.value?.ip}`, 'success')
+    hosts.value = hosts.value.filter((h) => h.ip !== selected.value?.ip)
+    selected.value = null
+  } catch (err: any) {
+    showToast(`納入失敗：${err?.data?.detail ?? '請稍後重試'}`, 'error')
+  } finally {
+    saving.value = false
+  }
+}
+</script>
+
+<template>
+  <div>
+    <div class="breadcrumb-bar"><span class="pin">📌</span> 資產盤點 → <b>納入管理</b></div>
+    <h1 class="page-title">納入管理</h1>
+    <p class="page-sub">把機器帶進系統。先「開始收集」讓系統自己找路進去，再把還沒登記的補成資產。</p>
+
+    <!-- ===== ①收集入口：一個動作，系統自己選路 ===== -->
+    <section v-if="!selected" class="card">
+      <div class="sec-head"><span class="t">開始收集 <InfoNote>輸入要納進來的範圍，按一下就好——<b>不用自己判斷該走哪一條</b>。系統會逐台探測，能走 SSH 的走 SSH、只有 Windows 管道的走 WinRM、進不去但活著的產 Push Agent 安裝包、完全沒回應的列進「只能靠匯入」。<br><br>已經有資料在 Excel／RVTools 裡的走「資料匯入」，那是既有資料進場，不是收集。</InfoNote></span></div>
+      <!-- 從網段配置表挑：先環境、再機房、最後勾網段（2026-09-15 使用者要的順序） -->
+      <div v-if="segTree.length" class="segpick">
+        <div class="sp-head">
+          <b>從網段配置表挑</b>
+          <button class="lnk" type="button" @click="segOpen = !segOpen">{{ segOpen ? '收合' : '展開' }}</button>
+          <InfoNote>網段配置表裡有機房、環境、用途，所以這裡可以先選「測試」再選機房，看有哪些網段可以收——不用自己背哪一段是哪裡。勾好按「加入範圍」會填進下面的輸入框，你還可以自己增減，確認台數後再按「開始收集」。<br><br>資安註記<b>排除掃描</b>的網段照列出來但不能勾，並寫明原因——不是偷偷不見。</InfoNote>
+        </div>
+        <!-- 版面收成一行（2026-09-16 使用者：「這個頁面字太多了。像這個五行其實可以縮為一行就好，
+             用橫的、不要用直的，這樣可以大幅縮減這個畫面」）。
+             環境／機房／排除開關／全選／加入範圍原本各佔一行，現在同一列；
+             網段清單改多欄，一段一格而不是一段一行。 -->
+        <div v-if="segOpen" class="sp-body">
+          <div class="sp-bar">
+            <span class="sp-lbl">環境</span>
+            <button v-for="e in segEnvs" :key="e" type="button" class="chip"
+                    :class="{ on: segEnv === e }" @click="segEnv = e">{{ e }}</button>
+
+            <span class="sp-lbl">機房</span>
+            <select v-model="segLoc" class="sp-sel">
+              <option v-for="l in segLocs" :key="l" :value="l">{{ l }}</option>
+            </select>
+            <span v-if="!segLocs.length" class="dim small">這個環境沒有登記的網段</span>
+
+            <label class="sp-ex" :title="'網段表的註記是「建議」排除掃描（UAT／員工電腦／重複設備 IP），不等於不能做資產收集。打開後每一段都會寫出被註記的原因。'">
+              <input v-model="segShowExcluded" type="checkbox" />
+              含建議排除（{{ segExcludedCount }}）
+            </label>
+
+            <label v-if="segVisible.length" class="sp-ex">
+              <input type="checkbox" :disabled="!segPickable.length"
+                     :checked="segPickable.length > 0 && segPickable.every((s) => segSel.has(s.cidr))"
+                     @change="toggleAllSegs" />
+              全選（{{ segPickable.length }}）
+            </label>
+
+            <span class="spacer" />
+            <button class="btn small primary" type="button" :disabled="!segSel.size" @click="addSelectedSegs">
+              加入範圍（{{ segSel.size }} 段）
+            </button>
+          </div>
+
+          <div v-if="segVisible.length" class="sp-grid">
+            <label v-for="s in segVisible" :key="s.cidr" class="sp-cell" :class="{ ex: s.scan_excluded }"
+                   :title="s.scan_excluded ? `網段表註記：${s.scan_note || '建議排除掃描'}` : (s.label || '')">
+              <input type="checkbox" :checked="segSel.has(s.cidr)" @change="toggleSeg(s.cidr)" />
+              <span class="mono">{{ s.cidr }}</span>
+              <span class="dim">{{ s.label.replace(s.cidr, '').trim() }}</span>
+              <span v-if="s.scan_excluded" class="exdot" title="網段表建議排除掃描">建議排除</span>
+            </label>
+          </div>
+        </div>
+      </div>
+      <textarea v-model="targets" class="targets" :disabled="dispatching"
+                placeholder="每行一項，可混用：&#10;10.99.1.0/24&#10;10.99.2.10-20&#10;10.99.3.5" />
+      <div class="actions">
+        <button class="btn" :disabled="dispatching" @click="runDispatch">
+          {{ dispatching ? (progress ? `收集中… 第 ${progress.batch_done}/${progress.batch_total} 批、${progress.done_count}/${progress.total} 台` : `收集中… ${dElapsed}s`) : '開始收集' }}
+        </button>
+        <!-- 批次間隔可設定（2026-09-16 使用者：「預設每個網段間距2分鐘」「可以設定改幾分鐘」）。
+             間隔是刻意的：一次對上千台送封包對網路不客氣，也容易被 SOC 當成掃描行為。 -->
+        <span v-if="batchInfo && !dispatching" class="ahint">
+          超過 {{ batchInfo.batch_size }} 台自動分批，每批間隔
+          <input type="number" min="0" max="60" step="0.5" class="gapin"
+                 :value="batchInfo.gap_seconds / 60"
+                 @change="saveGap(Number(($event.target as HTMLInputElement).value))" /> 分鐘
+        </span>
+        <span v-if="!dispatching" class="ahint">
+          <template v-if="targetCount">目前輸入約 <b>{{ targetCount }}</b> 台　</template>
+          <InfoNote>一次最多 1024 台；整個網段的例行掃描請走掃描排程。</InfoNote>
+        </span>
+      </div>
+      <!-- 失敗留在畫面上，講得出原因＋下一步 -->
+      <div v-if="dispatchError && !dispatching" class="d-err">
+        <b>✕ {{ dispatchError }}</b>
+        <div class="small">常見原因：範圍太大、網頁等太久被中斷（後端可能還在跑，跑完會存下來）；或後端出錯。先按「載入上次結果」看有沒有存到；還是不清楚，打開下方「開始收集紀錄」看細節或下載分析檔。</div>
+        <button class="btn small" type="button" @click="reloadLatest">載入上次結果</button>
+      </div>
+      <!-- 納管後自動收集的結果也要在「納管的地方」看得到（2026-09-17 使用者：
+           「我認為我納管後，所有的資料都要跟著變動」——資料有沒有真的跟著變，
+           得看得到才算數）。 -->
+      <CollectLog ref="logRef" :kinds="['dispatch', 'post_onboard']" title="開始收集／納管後自動收集紀錄" />
+      <!-- 執行中：講得出「在做什麼、幾台、大概多久」，不做假的百分比 -->
+      <div v-if="dispatching" class="working">
+        <span class="dots"><i /><i /><i /></span>
+        <div class="w-txt">
+          正在逐台探測（{{ targetCount || '?' }} 台），能進去的會直接連進去收。
+          <br>沒回應的每台約 5 秒（要等它逾時），所以全部沒回應時最久約
+          <b>{{ Math.ceil((targetCount || 1) * 5 / 64) }} 秒</b>——同時跑 64 台，不是一台一台等。
+          <br>做完會存下來，<b>中途關掉頁面也不會白跑</b>，回來還看得到結果。
+        </div>
+      </div>
+    </section>
+
+    <!-- 結果：一張表分得出「收到了」跟「要人工處理」 -->
+    <section v-if="dispatch && dispatch.results.length && !selected" class="card">
+      <div class="sec-head">
+        <span class="t">收集結果</span>
+        <span v-if="dispatch.run" class="muted small">
+          {{ dispatch.run.finished_at || dispatch.run.started_at }}｜共 {{ dispatch.run.target_count }} 個位址
+        </span>
+      </div>
+      <!-- 使用者 2026-09-16：「為什麼是 508，還要人工處理?」——他貼的是兩個 /24，
+           508 是**位址數**不是機器數，而且全部沒回應卻被算成「要人工處理」。
+           掃一個網段本來就大部分是空的，所以空位址要單獨一格、不算待辦。 -->
+      <div class="tiles">
+        <div class="tile"><div class="t-num mono">{{ dispatch.total }}</div><div class="t-lbl">這次探測的位址</div></div>
+        <div class="tile ok"><div class="t-num mono">{{ dispatch.collected }}</div><div class="t-lbl">已納管</div></div>
+        <!-- 合計數字看不出其中幾台是儲存設備，所以底下把各類別拆開
+             （2026-10-13 使用者：「是 storage 你怎麼抓不出來，可把 storage 獨立分類出來」）。
+             舊的 run 這一欄是 NULL，要講「類別未留存」而不是裝作沒有這一類。 -->
+        <div class="tile">
+          <div class="t-num mono">{{ dispatch.by_status.not_onboardable || 0 }}</div>
+          <div class="t-lbl">另有納管方式
+            <span v-if="nokKinds.length" class="hint">
+              <template v-for="(k, i) in nokKinds" :key="k.kind"><template v-if="i">・</template><a
+                class="dl" href="#" @click.prevent="dRoute = NOK_KIND_TAB[k.kind] || 'nok_other'">{{ k.label }} {{ k.n }}</a></template>
+            </span>
+            <span v-else-if="(dispatch.by_status.not_onboardable || 0) > 0" class="hint">類別未留存</span>
+          </div>
+        </div>
+        <div class="tile warn"><div class="t-num mono">{{ dispatch.needs_action }}</div><div class="t-lbl">要人工處理</div></div>
+        <div class="tile"><div class="t-num mono">{{ dispatch.by_status.needs_agent || 0 }}</div><div class="t-lbl">要請人裝 Agent</div></div>
+        <div class="tile"><div class="t-num mono">{{ (dispatch.by_status.import_only || 0) - (dispatch.empty_addresses || 0) }}</div><div class="t-lbl">已登記但只能匯入</div></div>
+        <div class="tile"><div class="t-num mono">{{ dispatch.empty_addresses || 0 }}</div>
+          <div class="t-lbl">空位址
+            <span class="hint">沒回應也沒登記，不用處理</span>
+          </div>
+        </div>
+      </div>
+      <!-- 走哪條路：預設只看「動得了」的（A14）-->
+      <div class="routebar">
+        <button class="rchip" :class="{ on: dRoute === 'actionable' }" @click="dRoute = 'actionable'">
+          動得了的 {{ dActionableCount }}
+        </button>
+        <button class="rchip" :class="{ on: dRoute === 'ssh' }" @click="dRoute = 'ssh'">
+          <!-- 不寫「（Linux）」：走 SSH 不代表是 Linux，見 isWindowsOnSsh() 的註解 -->
+          SSH 收集 {{ dRouteCount.ssh ?? 0 }}
+          <span v-if="dSshWindowsCount" class="rchip-sub">（含 Windows {{ dSshWindowsCount }}）</span>
+        </button>
+        <button class="rchip" :class="{ on: dRoute === 'winrm' }" @click="dRoute = 'winrm'">
+          WinRM 收集 {{ dRouteCount.winrm ?? 0 }}
+        </button>
+        <button class="rchip" :class="{ on: dRoute === 'agent' }" @click="dRoute = 'agent'">
+          Push Agent {{ dRouteCount.agent ?? 0 }}
+        </button>
+        <!-- 有 SSH 但不納管的，依類別各一個頁簽（2026-10-13）。位置固定，0 也列 -->
+        <button v-for="t in NOK_TABS" :key="t.tab" class="rchip" :class="{ on: dRoute === t.tab }"
+                @click="dRoute = t.tab">
+          {{ t.label }} {{ dRouteCount[t.tab] ?? 0 }}
+        </button>
+        <button class="rchip" :class="{ on: dRoute === 'import' }" @click="dRoute = 'import'">
+          只能匯入 {{ dRouteCount.import ?? 0 }}
+        </button>
+        <button class="rchip" :class="{ on: dRoute === 'all' }" @click="dRoute = 'all'">
+          全部 {{ dispatchRows.length }}
+        </button>
+        <InfoNote>「只能匯入」＝這個 IP 完全不通（沒開 22、沒開 445、也沒回應），這套系統對它做不了任何事，只能靠 Excel／vCenter 匯入它的資料。掃一個 /24 大部分位址都是空的，所以這類通常最多。<br><br>預設不顯示它們，是因為那些列沒有按鈕也沒有下一步，只會把真正動得了的幾台淹掉。<b>數量還是列在上面</b>——「動得了的只有 3 台」跟「這個網段只有 3 台機器」是完全不同的兩件事，不能讓人看錯。</InfoNote>
+      </div>
+      <!-- 全部沒回應時一定要講清楚：不然表格空空的，看起來像「系統壞了」 -->
+      <p v-if="dispatch.total && (dispatch.by_status.import_only || 0) === dispatch.total" class="d-allnone">
+        這次 <b>{{ dispatch.total }}</b> 個位址<b>全部沒有回應</b>（22／445／5985 等都不通）——不是系統壞了，
+        是這段沒有機器、或防火牆擋掉收集器。它們已收起，點上面「全部」看得到每一個位址。
+      </p>
+      <p v-if="dHiddenCount || dHiddenNok" class="muted small hidnote">
+        已收起 <b>{{ dHiddenCount }}</b> 台「只能匯入」的位址（掃不到、動不了）<template v-if="dHiddenNok">、<b>{{ dHiddenNok }}</b> 台另有納管方式</template>
+      </p>
+
+      <!-- 勾選要拿來做什麼：**每一個頁簽都切得過去**，所以每一頁都能批次搬移
+           （使用者 1.429.0：「我沒辦法一次改」——4 台 Windows+OpenSSH 要一次搬到 WinRM）。
+           兩個模式的按鈕**不同時存在**（v-if 不是 disabled），勾選也不跨模式帶——見 pickMode 註解 -->
+      <div v-if="dVisible.length" class="pickmode">
+        <span class="pm-l">勾選後要做什麼：</span>
+        <button class="pm" :class="{ on: !moveMode }" :disabled="!canOnboardHere"
+                :title="canOnboardHere ? '勾要佈收集帳號的那幾台（試密碼／一次納管）'
+                  : '這一頁沒有「待佈身分而且走 SSH」的機器，佈收集帳號對它們沒有作用'"
+                @click="pickMode = 'onboard'">🔑 佈收集帳號</button>
+        <button class="pm" :class="{ on: moveMode }" @click="pickMode = 'move'">📁 搬移分類</button>
+        <span v-if="!canOnboardHere" class="muted small">（這一頁沒有要佈帳號的機器）</span>
+        <span class="muted small">換模式會清空已勾選的——避免勾了一個用途、送去另一個</span>
+      </div>
+
+      <!-- 批次試密碼：勾好要憑證的那批，一次比對 A/B 兩組密碼哪一組通 -->
+      <div v-if="!moveMode && probeableRows.length" class="probebar" :class="{ active: probeSelected.size > 0 }">
+        <label class="pb-all">
+          <input type="checkbox" :checked="allProbeableSelected" @change="toggleAllProbeable" />
+          全選要憑證的 {{ probeableRows.length }} 台
+        </label>
+        <span class="muted small">已勾 <b>{{ probeSelected.size }}</b> 台</span>
+        <button class="btn small ghost" :disabled="probeSelected.size === 0"
+                @click="showBatchProbe = true">🔑 批次試密碼</button>
+        <button class="btn small primary" :disabled="probeSelected.size === 0"
+                @click="batchOnboardIps = [...probeSelected]">⚡ 勾選的一次納管</button>
+        <span class="muted small">不確定密碼就先「批次試密碼」；確定了直接一次納管</span>
+      </div>
+
+      <!-- 批次搬移：每一個頁簽都有（切到「搬移分類」模式就出現） -->
+      <div v-if="moveMode && movableRows.length" class="probebar" :class="{ active: moveSelected.size > 0 }">
+        <label class="pb-all">
+          <input type="checkbox" :checked="allMovableSelected" @change="toggleAllMovable" />
+          全選這一頁的 {{ movableRows.length }} 台
+        </label>
+        <span class="muted small">已勾 <b>{{ moveSelected.size }}</b> 台</span>
+        <button class="btn small primary" :disabled="moveSelected.size === 0"
+                @click="openMove(dVisible.filter((r) => moveSelected.has(r.ip)))">📁 批次搬移分類</button>
+        <span class="muted small">分類判錯了（例如裝了 OpenSSH 的 Windows 被排在 SSH 收集）就整批搬到對的頁簽；重新收集不會蓋回去</span>
+      </div>
+      <!-- 一台都勾不了時要講原因，不要只留一個空工具列讓人以為畫面壞了 -->
+      <p v-else-if="moveMode && dVisible.length" class="muted small hidnote">
+        這一頁 <b>{{ dVisible.length }}</b> 台都還認不出是哪一台（資產庫沒登記、沒有主機名也沒有序號），
+        所以不能勾、也不能搬——請先在下面「登記成資產」把它們登記起來。
+      </p>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <!-- 同一欄、兩種用途，由上面那排**明寫的模式**決定（見 pickMode 註解）：
+                 搬移分類＝選要搬的；佈收集帳號＝選要試密碼／納管的。兩組勾選各自獨立 -->
+            <th class="ck">
+              <input v-if="moveMode" type="checkbox" title="全選這一頁可搬移的"
+                     :checked="allMovableSelected" :disabled="!movableRows.length"
+                     @change="toggleAllMovable" />
+              <input v-else type="checkbox" title="全選要憑證的"
+                     :checked="allProbeableSelected"
+                     :disabled="!probeableRows.length" @change="toggleAllProbeable" />
+            </th>
+            <SortTh k="no" :active="dSortKey" :dir="dSortDir" @sort="dToggle">#</SortTh>
+            <SortTh k="ip" :active="dSortKey" :dir="dSortDir" @sort="dToggle">IP</SortTh>
+            <SortTh k="hostname" :active="dSortKey" :dir="dSortDir" @sort="dToggle">主機名稱</SortTh>
+            <SortTh k="open_ports" :active="dSortKey" :dir="dSortDir" @sort="dToggle">開放埠</SortTh>
+            <SortTh k="route" :active="dSortKey" :dir="dSortDir" @sort="dToggle">走哪條路</SortTh>
+            <SortTh k="status" :active="dSortKey" :dir="dSortDir" @sort="dToggle">結果</SortTh>
+            <SortTh k="message" :active="dSortKey" :dir="dSortDir" @sort="dToggle">下一步</SortTh>
+            <th>操作</th>
+          </tr></thead>
+          <tbody>
+            <tr v-for="r in dVisible" :key="r.ip">
+              <td class="ck">
+                <template v-if="moveMode">
+                  <input v-if="canMove(r)" type="checkbox" :checked="moveSelected.has(r.ip)"
+                         @change="toggleMove(r.ip)" />
+                  <!-- 勾不了的要講為什麼，不要給一個空格子讓人以為畫面壞了 -->
+                  <span v-else class="muted" :title="whyCannotMove(r)">—</span>
+                </template>
+                <input v-else-if="canProbe(r)" type="checkbox" :checked="probeSelected.has(r.ip)"
+                       @change="toggleProbe(r.ip)" />
+              </td>
+              <td class="mono small dim">{{ r.no }}</td>
+              <td class="mono">
+                <NuxtLink v-if="r.asset_serial" class="dl" :to="`/assets/${r.asset_serial}`">{{ r.ip }}</NuxtLink>
+                <template v-else>{{ r.ip }}</template>
+              </td>
+              <td>{{ r.hostname || (r.registered ? '—' : '(未登記)') }}</td>
+              <!-- 天條二：埠點下去看得到「還有誰也在跑它」 -->
+              <td class="mono small">
+                <template v-if="r.open_ports">
+                  <NuxtLink v-for="p in r.open_ports.split(',')" :key="p" class="dl port"
+                            :to="`/services?port=${p}`">{{ p }}</NuxtLink>
+                </template>
+                <template v-else>—</template>
+              </td>
+              <!-- 走 ssh 但開了 3389／5985：標出來，不然人會照頁簽拿 Linux 腳本去打 -->
+              <td>
+                <!-- 不納管的不寫探測到的 route（ESXi 寫「Push Agent」會像在叫人去裝 agent）。
+                     route 是探測事實、沒有被改掉，留在 tooltip 裡查得到 -->
+                <template v-if="r.guide">
+                  <span v-if="r.guide.how" class="route-alt"
+                        :title="`探測到的路由：${ROUTE_LABEL[r.route] || r.route}（開放埠推出來的事實）。這台不走 Linux 那套（SSH 建本機帳號），要走「${r.guide.how}」。`">{{ r.guide.how }}</span>
+                  <span v-else class="muted"
+                        :title="`探測到的路由：${ROUTE_LABEL[r.route] || r.route}（開放埠推出來的事實）。${r.guide.note ?? ''}`">目前不收</span>
+                </template>
+                <template v-else>{{ ROUTE_LABEL[r.route] || r.route }}</template>
+                <span v-if="isWindowsOnSsh(r)" class="wintag"
+                      title="開了 3389／5985（只有 Windows 會開）——這台是裝了 OpenSSH 的 Windows，走 SSH 收集沒錯，但納管請選 Windows 腳本">Windows+OpenSSH</span>
+              </td>
+              <td>
+                <span class="pill" :class="STATUS_TONE[r.status]">{{ STATUS_LABEL[r.status] || r.status }}</span>
+                <!-- 人改過的要看得出來：滑過看得到誰、何時、從哪類改到哪類（2026-10-16） -->
+                <span v-if="r.os_override" class="ovtag" :title="overrideTitle(r)">人工指定</span>
+              </td>
+              <!-- 下一步：不納管的要指路。「不納管」是結論不是下一步——
+                   使用者原話「這些都有它獨立納管方式」 -->
+              <td class="msg">
+                <template v-if="r.guide?.page">
+                  走 <NuxtLink class="dl" :to="r.guide.page">{{ guideWhere(r) }}</NuxtLink>
+                  <span class="muted small"> — 不走 Linux 那套（SSH 建本機帳號）</span>
+                  <span class="why" :title="r.message">為什麼這樣判？</span>
+                </template>
+                <template v-else-if="r.guide">
+                  <b>目前不收</b>
+                  <span class="muted small"> — {{ r.guide.note }}</span>
+                  <span class="why" :title="r.message">為什麼這樣判？</span>
+                </template>
+                <template v-else>{{ r.message }}</template>
+              </td>
+              <td class="ops">
+                <button v-if="r.status === 'needs_agent'" class="btn small primary"
+                        :disabled="pkgBusy" @click="getPackage(r.ip)">取得安裝包</button>
+                <button v-else-if="r.status === 'needs_credential' && r.route === 'ssh'"
+                        class="btn small primary"
+                        @click="openOnboard({ ip: r.ip, os_guess: null } as any)">⚡ 一鍵納管</button>
+                <NuxtLink v-else-if="r.status === 'import_only'" class="btn small ghost" to="/import">去匯入</NuxtLink>
+                <span v-else-if="r.status === 'collected'" class="small" style="color: var(--brand-dark)">✓ 已納管</span>
+                <!-- 操作欄：這條路這一頁做不了，不是「不管它」——所以寫「另有路徑」 -->
+                <span v-else-if="r.status === 'not_onboardable'" class="muted small"
+                      :title="r.message">{{ r.guide && !r.guide.how ? '目前不收' : '另有收集路徑' }}</span>
+                <span v-else class="muted small">—</span>
+                <!-- 每一列都有：使用者「我還是沒看到可以移動到其他組別的方式」（2026-10-16）。
+                     不能只留在資產明細頁——他是在這一頁看到分類錯的 -->
+                <button class="btn small ghost" :disabled="!canMove(r)"
+                        :title="canMove(r) ? '這台被分到哪一類不對？搬到對的頁簽（重新收集不會蓋回去）' : whyCannotMove(r)"
+                        @click="openMove([r])">改分類</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===== 搬到別的頁簽（2026-10-16）===== -->
+    <div v-if="moveRows.length" class="modal-mask" @click.self="moveRows = []">
+      <div class="modal">
+        <div class="mhead">
+          改分類 — {{ moveRows.length === 1 ? moveRows[0].ip : `勾選的 ${moveRows.length} 台` }}
+          <InfoNote>分類是系統依資產登記的「作業系統」欄與設備機型自動判的，總會有少數判錯——例如一般伺服器的作業系統欄被登記成「儲存設備」，就會被歸到儲存設備頁簽。這裡改的是<b>系統這一邊的分類</b>，<b>不會去動資產清冊的原始資料</b>，所以重匯 CIA 也不會把你的指定沖掉。<br><br>搬成「SSH 收集」<b>只影響顯示與試連</b>（唯讀登入試一次）——系統<b>不會</b>自己跑去那台建帳號；要建帳號仍然得由人按「⚡ 一鍵納管」。</InfoNote>
+        </div>
+        <p v-if="moveRows.length === 1" class="mhint">
+          目前在「{{ TAB_LABEL_MAP[moveRows[0].tab!] ?? moveRows[0].tab }}」頁簽。
+          <template v-if="moveRows[0].os_override">這是人工指定的（{{ moveRows[0].os_override!.by ?? '不詳' }} 於 {{ moveRows[0].os_override!.at }}）。</template>
+          <template v-else>{{ moveRows[0].message }}</template>
+        </p>
+        <p v-else class="mhint">
+          {{ moveRows.map((r) => r.ip).join('、') }}
+        </p>
+        <label class="fl">搬到哪個頁簽
+          <select v-model="moveTab">
+            <option value="">（請選）</option>
+            <option v-for="c in moveTargetChoices" :key="c.tab" :value="c.tab">
+              {{ c.label }}{{ c.onboardable ? '（會去試連）' : '（另有納管方式，不試連）' }}
+            </option>
+          </select>
+        </label>
+        <label class="fl">為什麼（選填，會跟著紀錄留下來）
+          <textarea v-model="moveReason" rows="2"
+                    placeholder="例：這台是一般伺服器，資產的作業系統欄登記錯了" />
+        </label>
+        <div class="macts">
+          <button class="btn primary" :disabled="!moveTab || moveBusy" @click="submitMove(false)">
+            {{ moveBusy ? '搬移中…' : '搬過去' }}
+          </button>
+          <!-- 取消指定是軟刪除，紀錄不會消失 -->
+          <button v-if="moveRows.some((r) => r.os_override)" class="btn ghost"
+                  :disabled="moveBusy" @click="submitMove(true)">還原成機器判定</button>
+          <button class="btn ghost" :disabled="moveBusy" @click="moveRows = []">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Push Agent 安裝包：交給「要請人裝」的那位 -->
+    <div v-if="pkg" class="modal-mask" @click.self="pkg = null">
+      <div class="modal wide">
+        <div class="mhead">Push Agent 安裝包 — {{ pkg.ip }} <InfoNote>這台系統進不去，改由主機自己每天回報，<b>collector 完全不主動連進去</b>——防火牆只需要開「主機 → collector」單向。</InfoNote></div>
+        <p v-if="pkg.created_asset" class="mhint">已為這台建立資產 <code>{{ pkg.asset_serial }}</code>，業務欄位請稍後補上。</p>
+        <ol class="steps">
+          <li>複製下方腳本，存成 <code>/tmp/bootstrap_watcher.sh</code> 交給該機管理者。</li>
+          <li>請他以 root 執行一行：<code>{{ pkg.install_command }}</code></li>
+          <li>裝完當天起每天自動回報到 <code>{{ pkg.collector_url }}</code>，之後不需要再用 root 登入這台。</li>
+        </ol>
+        <textarea class="cmdbox" readonly :value="pkg.files['bootstrap_watcher.sh']"
+                  @focus="($event.target as HTMLTextAreaElement).select()" />
+        <div class="macts">
+          <button class="btn primary" @click="copyPkgScript">{{ pkgCopied ? '✓ 已複製' : '複製安裝腳本' }}</button>
+          <button class="btn ghost" @click="pkg = null">關閉</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 納管紀錄：失敗了要看得到為什麼，不用 SSH 進去翻 ===== -->
+    <section v-if="!selected && audits.length" class="card">
+      <div class="sec-head">
+        <span class="t">納管紀錄 <InfoNote>這裡只留帳號名與成敗，<b>永遠不含密碼</b>。要更底層的伺服器日誌：<code>journalctl -u webit3-api -n 200</code>。</InfoNote></span>
+        <button class="link-btn" type="button" @click="showAudit = !showAudit">
+          {{ showAudit ? '收起' : `看全部（${audits.length} 筆）` }}
+        </button>
+      </div>
+
+      <!-- 最近一次失敗直接攤開，不用先展開再找 -->
+      <div v-if="lastFail && !showAudit" class="lastfail">
+        <div class="lf-head">
+          最近一次失敗 · {{ lastFail.created_at }} · <span class="mono">{{ lastFail.target_ip }}</span>
+          <span class="pill bad">{{ lastFail.stage || '未知階段' }}</span>
+          <InfoNote>階段的意思：<b>connect</b> ＝ 還沒進到目標機（帳密錯／連不上／缺收集金鑰）；<b>execute</b> ＝ 進去了但腳本沒跑完（多半是權限或 sudo）。</InfoNote>
+        </div>
+        <p class="lf-msg">{{ lastFail.message }}</p>
+        <pre v-if="lastFail.output" class="outbox">{{ lastFail.output }}</pre>
+      </div>
+
+      <div v-if="showAudit" class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <SortTh k="created_at" :active="aSortKey" :dir="aSortDir" @sort="aToggle">時間</SortTh>
+            <SortTh k="target_ip" :active="aSortKey" :dir="aSortDir" @sort="aToggle">目標</SortTh>
+            <SortTh k="platform" :active="aSortKey" :dir="aSortDir" @sort="aToggle">平台</SortTh>
+            <SortTh k="login_user" :active="aSortKey" :dir="aSortDir" @sort="aToggle">登入帳號</SortTh>
+            <SortTh k="trigger" :active="aSortKey" :dir="aSortDir" @sort="aToggle">觸發</SortTh>
+            <SortTh k="ok" :active="aSortKey" :dir="aSortDir" @sort="aToggle">結果</SortTh>
+            <SortTh k="stage" :active="aSortKey" :dir="aSortDir" @sort="aToggle">階段</SortTh>
+            <SortTh k="message" :active="aSortKey" :dir="aSortDir" @sort="aToggle">訊息</SortTh>
+            <th>輸出</th>
+          </tr></thead>
+          <tbody>
+            <template v-for="a in aSorted" :key="a.id">
+              <tr>
+                <td class="small">{{ a.created_at }}</td>
+                <td class="mono">{{ a.target_ip }}</td>
+                <td>{{ a.platform || '—' }}</td>
+                <td>{{ a.login_user || '—' }}</td>
+                <td class="small">{{ a.trigger === 'auto' ? '排程' : (a.triggered_by || '手動') }}</td>
+                <td><span class="pill" :class="a.ok ? 'ok' : 'bad'">{{ a.ok ? '成功' : '失敗' }}</span></td>
+                <td class="small">{{ a.stage || '—' }}</td>
+                <td class="msg">{{ a.message }}</td>
+                <td>
+                  <button v-if="a.output" class="link-btn" type="button"
+                          @click="openOutput = openOutput === a.id ? null : a.id">
+                    {{ openOutput === a.id ? '收起' : '看輸出' }}
+                  </button>
+                  <span v-else class="muted small">—</span>
+                </td>
+              </tr>
+              <tr v-if="openOutput === a.id">
+                <td colspan="9"><pre class="outbox">{{ a.output }}</pre></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <div v-if="!selected" class="sec-head" style="margin-top:26px"><span class="t">登記成資產</span></div>
+    <div v-if="hosts.length === 0 && !selected" class="empty">
+      目前沒有「掃到了、CIA 沒登記」的主機——都納管完了，或還沒掃描。
+    </div>
+
+    <!-- 勾選列：沒勾東西時安靜，勾了才亮起來（同批次試密碼那一列） -->
+    <div v-if="!selected && hosts.length" class="probebar" :class="{ active: adoptSelected.size > 0 }">
+      <label class="pb-all">
+        <input type="checkbox" :checked="allAdoptSelected" @change="toggleAllAdopt" />
+        全選 {{ sorted.length }} 台
+      </label>
+      <span class="muted small">已勾 <b>{{ adoptSelected.size }}</b> 台</span>
+      <button class="btn small primary" :disabled="adoptSelected.size === 0"
+              @click="batchOnboardIps = [...adoptSelected]">⚡ 勾選的一次納管</button>
+    </div>
+
+    <!-- 納管失敗清單（2026-09-17 使用者：「這些帳號納管失敗，我以後要怎麼查那些納管失敗過，
+         他的 root 密碼可能不是預設密碼」）。納管紀錄是流水帳，這裡給的是**現況**：
+         每台最後一次的結果，只列現在仍然進不去的，並帶部門窗口（要去找誰問密碼）。 -->
+    <section v-if="!selected && failures.length" class="card">
+      <div class="sec-head">
+        <span class="t">納管失敗清單（{{ failures.length }} 台）</span>
+        <span class="acts">
+          <a class="btn small" :href="`${runtimeConfig.public.apiBase}/api/onboard/failures/export`">⬇ 匯出 Excel</a>
+          <button class="btn small ghost" type="button" @click="failOpen = !failOpen">{{ failOpen ? '收合' : '展開' }}</button>
+        </span>
+      </div>
+      <p class="fsum">
+        <span v-for="(n, k) in failSummary.by_reason" :key="k" class="fchip" :class="{ hot: k === '帳密不對' }">
+          {{ k }} <b>{{ n }}</b>
+        </span>
+        <span v-if="failSummary.credential" class="dim">
+          　← 這 {{ failSummary.credential }} 台的密碼不是預設值，要跟窗口要正確密碼或走 PAM
+        </span>
+      </p>
+      <div v-if="failOpen" class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th>IP</th><th>主機名稱</th><th>機房</th><th>使用單位（部門）</th><th>窗口</th>
+            <th>失敗原因</th><th>下一步</th><th class="num">失敗次數</th><th>最後一次</th>
+          </tr></thead>
+          <tbody>
+            <tr v-for="f in failures" :key="f.ip">
+              <td class="mono">
+                <NuxtLink v-if="f.asset_serial" class="dl" :to="`/assets/${encodeURIComponent(f.asset_serial)}`">{{ f.ip }}</NuxtLink>
+                <template v-else>{{ f.ip }}</template>
+              </td>
+              <td>{{ f.hostname || '—' }}</td>
+              <td>{{ f.physical_location || '—' }}</td>
+              <td>{{ f.department || '—' }}</td>
+              <td>{{ f.contact || '—' }}<span v-if="f.custodian && f.custodian !== f.contact" class="dim small">／{{ f.custodian }}</span></td>
+              <td><span class="fchip" :class="{ hot: f.reason === '帳密不對' }">{{ f.reason }}</span></td>
+              <td class="small" :title="f.message || ''">{{ f.next_step }}</td>
+              <td class="num">{{ f.fail_count }}</td>
+              <td class="mono small dim">{{ f.last_tried_at }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 上次收集摘要：讓「登記成資產」這一區跟上面的結果表對得起來（2026-09-16 使用者） -->
+    <p v-if="!selected && dispatch && dispatch.results.length" class="lastsum">
+      上次收集 <span class="mono">{{ lastRunAt || '—' }}</span>：
+      收到 <b class="ok-t">{{ dispatch.collected }}</b>、
+      要處理 <b class="warn-t">{{ dispatch.needs_action }}</b>、
+      另有納管方式 {{ dispatch.by_status?.not_onboardable || 0 }}、
+      空位址 {{ dispatch.empty_addresses || 0 }}
+      <span class="muted sm">／共探測 {{ dispatch.total }} 個位址</span>
+    </p>
+
+    <!-- 候選清單 -->
+    <div v-if="!selected && hosts.length" class="tbl-wrap">
+      <table>
+        <thead><tr>
+          <th class="ck"><input type="checkbox" :checked="allAdoptSelected" @change="toggleAllAdopt" /></th>
+          <SortTh k="ip" :active="sortKey" :dir="sortDir" @sort="toggle">IP</SortTh>
+          <SortTh k="hostname" :active="sortKey" :dir="sortDir" @sort="toggle">主機名稱</SortTh>
+          <SortTh k="os_guess" :active="sortKey" :dir="sortDir" @sort="toggle">研判（掃描指紋） <InfoNote><b>未登入主機、純從網路探測</b>推得的線索，用來認出這台大概是什麼；真正的主機名／序號要納管後由 facts 收集。</InfoNote></SortTh>
+          <th>上次收集 <InfoNote>這台在<b>最近一次「開始收集」</b>裡的結果。空白＝那一輪沒有掃到這台（不在範圍內）。<br><br>滑過看失敗原因。</InfoNote></th>
+          <th>操作</th>
+        </tr></thead>
+        <tbody>
+          <tr v-for="h in sorted" :key="h.ip">
+            <td class="ck"><input type="checkbox" :checked="adoptSelected.has(h.ip)" @change="toggleAdopt(h.ip)" /></td>
+            <td class="mono">{{ h.ip }}</td>
+            <td>{{ h.hostname || '(反解不到)' }}</td>
+            <td>
+              <div class="fp">
+                <span v-if="h.is_vm" class="tag vm">VM</span>
+                <span v-if="h.mac_vendor" class="tag vendor">{{ h.mac_vendor }}</span>
+                <span v-if="h.os_guess" class="tag os">{{ h.os_guess }}</span>
+                <span v-if="!h.mac_vendor && !h.os_guess && !h.is_vm" class="muted">— 線索不足 —</span>
+              </div>
+              <div class="fp-sub muted">
+                <span v-if="h.open_ports">埠 {{ h.open_ports }}</span>
+                <span v-if="h.mac" class="mono">{{ h.mac }}</span>
+                <span v-if="h.segment">{{ h.segment }}</span>
+              </div>
+            </td>
+            <td class="lastres">
+              <template v-if="dispatchByIp[h.ip]">
+                <span class="pill" :class="STATUS_TONE[dispatchByIp[h.ip].status]"
+                      :title="dispatchByIp[h.ip].message || ''">
+                  {{ STATUS_LABEL[dispatchByIp[h.ip].status] || dispatchByIp[h.ip].status }}
+                </span>
+                <div v-if="dispatchByIp[h.ip].message" class="resmsg" :title="dispatchByIp[h.ip].message">
+                  {{ dispatchByIp[h.ip].message }}
+                </div>
+              </template>
+              <span v-else class="muted sm" title="最近一次收集沒有涵蓋這台">—</span>
+            </td>
+            <td class="ops">
+              <button class="btn small primary" @click="openOnboard(h)" title="系統自動進去建收集帳號">⚡ 一鍵納管</button>
+              <button class="btn small ghost" @click="openAdopt(h)" title="只登記成資產、不建收集帳號">手動登記</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ===== 已納管主機：重新納管／取消納管／編輯都在這裡，跟上面的「手動登記」同一種操作方式 ===== -->
+    <div v-if="!selected" class="sec-head" style="margin-top:26px">
+      <span class="t">已納管主機 {{ managed.length }}
+        <InfoNote>系統收得到資料的主機。<br><br><b>↻ 重新納管</b>＝再跑一次納管腳本：補佈帳號盤點輔助程式、修回被動過的帳號或金鑰。帳號在就不重建、金鑰在就不重加，動手前會先備份並留 <code>restore.sh</code>。<br><b>取消納管</b>＝把這台上的收集帳號、金鑰、sudo 規則收回來。<br><br>要補佈一大批：全選（或先搜尋篩出一批再全選）→「↻ 勾選的一次重新納管」，密碼只要輸入一次。</InfoNote>
+      </span>
+    </div>
+    <div v-if="!selected && managed.length" class="probebar" :class="{ active: managedSelected.size > 0 }">
+      <label class="pb-all">
+        <input type="checkbox" :checked="allManagedSelected" @change="toggleAllManaged" />
+        全選 {{ mSorted.length }} 台
+      </label>
+      <span class="muted small">已勾 <b>{{ managedSelected.size }}</b> 台</span>
+      <button class="btn small primary" :disabled="managedSelected.size === 0"
+              @click="batchOnboardIps = [...managedSelected]">↻ 勾選的一次重新納管</button>
+      <span class="osfilter">
+        <button class="osbtn" :class="{ on: managedOs === '' }" @click="managedOs = ''">全部 {{ managed.length }}</button>
+        <button v-for="os in Object.keys(managedOsCounts)" :key="os" v-show="managedOsCounts[os]"
+                class="osbtn" :class="{ on: managedOs === os }"
+                @click="managedOs = managedOs === os ? '' : os">{{ os }} {{ managedOsCounts[os] }}</button>
+      </span>
+      <input v-model="managedKw" class="mkw" type="search" placeholder="搜尋 IP／主機名稱／序號" />
+    </div>
+    <div v-if="!selected && !managed.length" class="empty">還沒有已納管的主機。</div>
+    <div v-if="!selected && managed.length" class="tbl-wrap">
+      <table>
+        <thead><tr>
+          <th class="ck"><input type="checkbox" :checked="allManagedSelected" @change="toggleAllManaged" /></th>
+          <SortTh k="ip" :active="mKey" :dir="mDir" @sort="mToggle">IP</SortTh>
+          <SortTh k="hostname" :active="mKey" :dir="mDir" @sort="mToggle">主機名稱</SortTh>
+          <SortTh k="os_type" :active="mKey" :dir="mDir" @sort="mToggle">OS</SortTh>
+          <SortTh k="asset_serial" :active="mKey" :dir="mDir" @sort="mToggle">資產序號</SortTh>
+          <SortTh k="collect_checked_at" :active="mKey" :dir="mDir" @sort="mToggle">最後確認收得到</SortTh>
+          <th>操作</th>
+        </tr></thead>
+        <tbody>
+          <tr v-for="m in mSorted" :key="m.ip">
+            <td class="ck"><input type="checkbox" :checked="managedSelected.has(m.ip)" @change="toggleManaged(m.ip)" /></td>
+            <td class="mono">{{ m.ip }}</td>
+            <td>{{ m.hostname || '—' }}</td>
+            <td class="small">{{ m.os_type || '—' }}</td>
+            <td class="mono small">
+              <NuxtLink v-if="m.asset_serial" class="dl" :to="`/assets/${m.asset_serial}`">{{ m.asset_serial }}</NuxtLink>
+              <template v-else>—</template>
+            </td>
+            <td class="small">{{ m.collect_checked_at || '—' }}</td>
+            <td class="ops">
+              <span class="pill ok">✓ 已納管</span>
+              <button class="btn small ghost" type="button"
+                      @click="openOnboard({ ip: m.ip, os_guess: null } as any)">↻ 重新納管</button>
+              <button class="btn small ghost danger-t" type="button" @click="revokeIp = m.ip">取消納管</button>
+              <NuxtLink v-if="m.asset_serial" class="btn small ghost" :to="`/assets/${m.asset_serial}?edit=1`">✎ 編輯</NuxtLink>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 取消納管：共用元件（跟資產詳細頁同一個） -->
+    <RevokeModal v-if="revokeIp" :ip="revokeIp" platform="linux"
+                 @done="onRevoked" @close="revokeIp = null" />
+
+    <!-- 一鍵納管：共用元件 -->
+    <OnboardModal v-if="onboardHost" :ip="onboardHost.ip" :os-guess="onboardHost.os_guess"
+                  @done="onOnboarded" @close="onboardHost = null" />
+
+    <!-- 勾選多台一次納管：每台走跟一鍵納管同一支 API -->
+    <BatchOnboardModal v-if="batchOnboardIps" :ips="batchOnboardIps"
+                       @done="onBatchOnboarded" @close="batchOnboardIps = null" />
+
+    <!-- 批次試密碼：只探測哪組密碼通，不建帳號、不跑腳本 -->
+    <BatchProbeModal v-if="showBatchProbe" :ips="[...probeSelected]"
+                     @close="showBatchProbe = false" />
+
+    <!-- 納入管理表單 -->
+    <div v-if="selected && meta" class="form-card">
+      <div class="form-head">
+        <div><b>納入管理 — {{ selected.ip }}</b><span class="muted"> {{ selected.hostname ? '（' + selected.hostname + '）' : '' }}</span></div>
+        <button class="btn ghost small" @click="selected = null">← 回清單</button>
+      </div>
+
+      <template v-for="cat in meta.categories" :key="cat.key">
+        <div class="sec-head">
+          <span class="t">{{ cat.label }}</span>
+        </div>
+        <div class="grid">
+          <div v-for="f in fieldsOf(cat.key)" :key="f.key" class="f">
+            <label :title="f.help || undefined">
+              {{ f.label }}<span v-if="f.required" class="req">必填</span>
+              <span class="layer" :class="f.layer">{{ f.layer === 'tech' ? '自動' : '手填' }}</span>
+            </label>
+            <!-- tech 有值→唯讀灰底 -->
+            <div v-if="f.layer === 'tech' && form[f.key]" class="ro">{{ form[f.key] }}</div>
+            <!-- tech 沒值→可手動補 -->
+            <input v-else-if="f.layer === 'tech'" v-model="form[f.key]" class="in" placeholder="未取得（待 facts 收集，可手動補）" />
+            <!-- biz select -->
+            <select v-else-if="f.options" v-model="form[f.key]" class="in" :class="{ missing: isMissing(f.key, f.required) }">
+              <option value="">—</option>
+              <option v-for="o in f.options" :key="o" :value="o">{{ o }}</option>
+            </select>
+            <!-- biz input -->
+            <input v-else v-model="form[f.key]" class="in" :class="{ missing: isMissing(f.key, f.required) }" />
+          </div>
+        </div>
+      </template>
+
+      <div class="actions">
+        <button class="btn" :disabled="saving" @click="submitAdopt">{{ saving ? '登記中…' : '納入管理' }}</button>
+        <button class="btn ghost" @click="selected = null">取消</button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.fsum { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; margin: 0 0 8px; }
+.fchip { font-size: 12px; padding: 1px 9px; border-radius: 10px; background: rgba(0,0,0,.05);
+         color: var(--ink-soft); white-space: nowrap; }
+.fchip.hot { background: var(--warn-soft); color: var(--warn-text); }
+.lastsum { font-size: 13px; margin: 0 0 8px; padding: 7px 12px; border-radius: 6px;
+           background: rgba(0,0,0,.04); }
+.lastsum .ok-t { color: var(--brand-dark); }
+.lastsum .warn-t { color: var(--warn-text); }
+.lastres { max-width: 230px; }
+.lastres .resmsg { font-size: 11px; color: var(--muted); margin-top: 2px;
+                   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sm { font-size: 11.5px; }
+/* 網段挑選：橫排一行＋多欄清單（2026-09-16 使用者要求縮減畫面高度） */
+.sp-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; font-size: 13px; }
+.sp-bar .spacer { flex: 1; }
+.sp-bar .sp-lbl { color: var(--muted); font-size: 12.5px; }
+.sp-bar .sp-ex { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.sp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 2px 12px;
+           max-height: 190px; overflow: auto; padding: 6px 8px; border: 1px solid var(--border);
+           border-radius: 6px; }
+.sp-cell { display: flex; align-items: baseline; gap: 6px; font-size: 12px; padding: 1px 0;
+           cursor: pointer; min-width: 0; }
+.sp-cell .dim { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-cell.ex { opacity: .75; }
+.exdot { font-size: 10px; padding: 0 5px; border-radius: 7px; background: var(--warn-soft);
+         color: var(--warn-text); white-space: nowrap; }
+.gapin { width: 56px; padding: 2px 6px; border: 1px solid var(--border-strong); border-radius: 4px;
+         background: var(--card); color: var(--ink); font-size: 12px; }
+.routebar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0 0; }
+.rchip { border: 1px solid var(--border); background: var(--card); color: var(--ink-soft);
+         border-radius: 999px; padding: 5px 12px; font-size: 12px; cursor: pointer; }
+.rchip:hover { border-color: var(--border-strong); }
+.rchip.on { border-color: var(--brand); background: var(--mint); color: var(--ink); font-weight: 600; }
+/* 「（含 Windows N）」是附註不是主要數字：比頁簽本體淡一階，不跟計數搶眼 */
+.rchip-sub { font-size: 11px; font-weight: 400; color: var(--muted); }
+.rchip.on .rchip-sub { color: var(--ink-soft); }
+/* 用警示色（不是品牌綠）：這是「別照頁簽直覺做」的提醒，要看得見 */
+.wintag { display: inline-block; margin-left: 6px; font-size: 10.5px; font-weight: 700;
+          padding: 1px 6px; border-radius: 3px; white-space: nowrap;
+          background: var(--warn-soft); color: var(--warn-text); cursor: help; }
+.hidnote { margin: 8px 0 0; }
+/* 「該走哪條收集路徑」：跟探測到的 route 用同一個欄位，所以要看得出是另一種東西 */
+.route-alt { color: var(--brand-dark); font-weight: 600; }
+.why { margin-left: 6px; font-size: 10.5px; color: var(--muted); cursor: help;
+       text-decoration: underline dotted; }
+/* 人工指定：用品牌色（這是「人改過」的事實，不是警示）。cursor: help 提示滑過有說明 */
+.ovtag { display: inline-block; margin-left: 6px; font-size: 10.5px; font-weight: 700;
+         padding: 1px 6px; border-radius: 3px; white-space: nowrap;
+         background: var(--mint); color: var(--brand-dark); cursor: help; }
+/* 搬移對話框的欄位 */
+.modal .fl { display: block; font-size: 12px; color: var(--ink-soft); margin-bottom: 14px; }
+.modal .fl select, .modal .fl textarea { display: block; width: 100%; margin-top: 6px;
+  padding: 7px 9px; font: inherit; font-size: 12.5px; border: 1px solid var(--border-strong);
+  border-radius: 6px; background: var(--card); color: var(--ink); }
+.modal .fl textarea { resize: vertical; }
+
+/* 批次試密碼的勾選列：沒勾東西時安靜，勾了才亮起來 */
+.probebar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 8px 12px; margin-bottom: 8px; border: 1px solid var(--border-strong);
+  border-radius: 8px; background: var(--card); }
+.probebar.active { border-color: var(--brand); background: var(--mint); }
+.pb-all { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-soft); cursor: pointer; }
+/* 勾選用途的模式切換：看得見「現在勾的是要做什麼」，不靠「你在哪個頁簽」去猜 */
+.pickmode { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.pickmode .pm-l { font-size: 12px; color: var(--ink-soft); }
+.pm { font-family: inherit; font-size: 12px; padding: 5px 12px; cursor: pointer;
+  border: 1px solid var(--border-strong); border-radius: 999px;
+  background: var(--card); color: var(--ink-soft); }
+.pm.on { border-color: var(--brand); background: var(--mint); color: var(--brand-dark); font-weight: 600; }
+.pm:disabled { opacity: .45; cursor: not-allowed; }
+td.ck, th.ck { width: 28px; text-align: center; }
+.mkw { margin-left: auto; min-width: 240px; font-family: inherit; font-size: 12px; padding: 6px 10px;
+  border: 1px solid var(--border-strong); background: var(--card); color: var(--ink); }
+.osfilter { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.osbtn { font-family: inherit; font-size: 12px; padding: 5px 10px; cursor: pointer;
+  border: 1px solid var(--border-strong); background: var(--card); color: var(--ink); border-radius: 4px; }
+.osbtn.on { border-color: var(--brand); background: var(--mint); color: var(--brand); font-weight: 600; }
+.ops .btn, .ops .pill { text-decoration: none; }
+.btn.small.ghost.danger-t { color: var(--bad); border-color: var(--bad); }
+
+.working { display: flex; gap: 10px; align-items: flex-start; margin-top: 10px;
+  padding: 9px 11px; border: 1px solid var(--border-strong); background: var(--mint); }
+.w-txt { font-size: 11px; color: var(--muted); line-height: 1.7; }
+.w-txt b { color: var(--ink-soft); }
+.dots { display: inline-flex; gap: 3px; padding-top: 5px; flex-shrink: 0; }
+.dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--brand);
+  animation: blink 1.2s infinite ease-in-out; }
+.dots i:nth-child(2) { animation-delay: .2s; }
+.dots i:nth-child(3) { animation-delay: .4s; }
+@keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
+
+.link-btn { background: none; border: none; color: var(--brand-dark); font-family: inherit;
+  font-size: 11.5px; cursor: pointer; padding: 0; text-decoration: underline; }
+.lastfail { border: 1px solid var(--bad); background: var(--bad-soft); padding: 10px 12px; }
+.lf-head { font-size: 12px; font-weight: 700; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.lf-msg { font-size: 12px; color: var(--ink); line-height: 1.6; margin: 6px 0; }
+.outbox { font-family: ui-monospace, Consolas, monospace; font-size: 10.5px; line-height: 1.5;
+  background: var(--card); border: 1px solid var(--border-strong); padding: 8px;
+  max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-all; margin: 6px 0; }
+
+.breadcrumb-bar { background: var(--mint); border: 1px solid var(--border-strong); padding: 8px 14px;
+  font-size: 12.5px; color: var(--ink-soft); display: flex; gap: 8px; align-items: center; margin-bottom: 14px; }
+.breadcrumb-bar .pin, .breadcrumb-bar b { color: var(--brand-dark); }
+.page-title { font-size: 17px; font-weight: 700; margin: 0 0 4px; }
+.page-sub { font-size: 12px; color: var(--muted); margin: 0 0 16px; }
+.empty { border: 1px solid var(--border); background: var(--card); padding: 30px; text-align: center; color: var(--muted); font-size: 13px; }
+.hint { font-size: 11.5px; color: var(--muted); margin: 0 0 10px; line-height: 1.5; }
+.t-lbl .hint { display: block; font-size: 10px; opacity: .75; margin: 2px 0 0; }
+.ops { display: flex; gap: 6px; white-space: nowrap; }
+.btn.primary { background: var(--brand); color: #fff; }
+.btn.small.ghost { background: var(--card); border: 1px solid var(--border-strong); color: var(--ink-soft); }
+.modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex;
+  align-items: center; justify-content: center; z-index: 50; }
+.modal { width: 380px; max-width: 92vw; background: var(--card-solid, #12211c);
+  border: 1px solid var(--border-strong); border-radius: 12px; padding: 22px 24px; }
+.modal .mhead { font-size: 15px; font-weight: 700; margin-bottom: 10px; color: var(--brand-dark); }
+.modal .mhint { font-size: 11.5px; color: var(--muted); line-height: 1.6; margin: 0 0 16px; }
+.modal .mhint code { color: var(--brand-dark); }
+.modal .mf { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+.modal .mf input, .modal .mf select { font-family: inherit; font-size: 13px; padding: 8px 10px;
+  border: 1px solid var(--border-strong); background: var(--card); color: var(--ink); border-radius: 6px; }
+.modal .mguess { font-size: 11px; color: var(--brand-dark); }
+.modal .macts { display: flex; gap: 10px; margin-top: 6px; }
+.hint b { color: var(--ink-soft); }
+.fp { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.fp .tag { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 3px; white-space: nowrap; }
+.fp .tag.vm { background: var(--warn-soft); color: var(--warn-text); }
+.fp .tag.vendor { background: var(--mint-deep); color: var(--brand-dark); }
+.fp .tag.os { background: var(--good-soft); color: var(--brand-dark); }
+.fp-sub { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; margin-top: 4px; }
+.mono { font-family: ui-monospace, Consolas, monospace; }
+.muted { color: var(--muted); }
+.tbl-wrap { overflow-x: auto; border: 1px solid var(--border); }
+table { border-collapse: collapse; width: 100%; font-size: 12.5px; min-width: 560px; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+th { color: var(--ink-soft); font-weight: 700; font-size: 12px; background: var(--mint); }
+tr:last-child td { border-bottom: none; }
+.form-card { border: 1px solid var(--border); background: var(--card); padding: 18px 20px; }
+.form-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.sec-head { margin: 16px 0 8px; }
+.sec-head .t { font-size: 12px; font-weight: 700; color: var(--brand-dark); text-transform: uppercase; letter-spacing: .04em; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px 14px; }
+.f label { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+.f .req { font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 2px; background: var(--bad); color: var(--ink); }
+.f .in.missing { border: 2px solid var(--bad); background: var(--bad-soft); }
+.f .layer { font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 2px; }
+.f .layer.tech { background: var(--good-soft); color: var(--brand-dark); }
+.f .layer.biz { background: var(--warn-soft); color: var(--warn-text); }
+.f .ro { font-size: 13px; font-weight: 700; background: var(--mint); border: 1px solid var(--border); padding: 7px 10px; }
+.f .in { width: 100%; font-family: inherit; font-size: 13px; padding: 7px 10px; border: 1px solid var(--border-strong); background: var(--card); color: var(--ink); }
+.actions { display: flex; gap: 10px; margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--border); }
+.btn { font-family: inherit; font-size: 12.5px; font-weight: 700; padding: 9px 20px; border: none; background: var(--brand); color: #fff; cursor: pointer; }
+.btn:hover:not(:disabled) { background: var(--brand-dark); }
+.btn:disabled { opacity: .6; cursor: not-allowed; }
+.btn.ghost { background: var(--card); border: 1px solid var(--border-strong); color: var(--ink-soft); }
+.btn.small { padding: 5px 10px; font-size: 11.5px; }
+
+/* ===== 收集入口 ===== */
+.card { border: 1px solid var(--border); background: var(--card); padding: 16px 18px; margin-bottom: 18px; }
+.card .sec-head { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 10px; }
+.small { font-size: 11px; }
+.dl { color: var(--brand-dark); text-decoration: none; border-bottom: 1px dotted var(--brand); }
+.dl:hover { color: var(--brand-dark); }
+.dl.port { margin-right: 6px; }
+.segpick { border: 1px solid var(--border); border-radius: 6px; padding: 9px 12px; margin-bottom: 10px; }
+.sp-head { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.sp-head .lnk { background: none; border: none; color: var(--brand-dark); text-decoration: underline; cursor: pointer; font-size: 12px; }
+.sp-body { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+.sp-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.sp-lbl { font-size: 12px; color: var(--ink-soft); min-width: 30px; }
+.sp-sel { padding: 4px 8px; border: 1px solid var(--border-strong); border-radius: 5px;
+          background: var(--card); color: var(--ink); }
+.chip { font-size: 12px; padding: 3px 10px; border-radius: 12px; border: 1px solid var(--border-strong);
+        background: var(--card); color: var(--ink); cursor: pointer; }
+.chip.on { border-color: var(--brand); color: var(--brand-dark); font-weight: 600; }
+.sp-list { display: flex; flex-direction: column; gap: 3px; max-height: 210px; overflow-y: auto;
+           border-top: 1px solid var(--border); padding-top: 6px; }
+.sp-item { display: flex; align-items: center; gap: 7px; font-size: 13px; padding: 2px 0; }
+.sp-item.all { font-weight: 600; }
+.sp-item.ex { opacity: .65; }
+.sp-item .exmark { font-size: 11px; color: var(--warn-text); }
+.sp-ex { font-size: 12px; color: var(--ink-soft); display: flex; align-items: center; gap: 5px; }
+.sp-acts { display: flex; align-items: center; gap: 8px; }
+.targets { width: 100%; min-height: 84px; font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px; line-height: 1.6; padding: 9px 11px; border: 1px solid var(--border-strong);
+  background: var(--card); color: var(--ink); resize: vertical; }
+.targets:disabled { opacity: .6; }
+.d-err { margin: 10px 0; padding: 9px 12px; border-radius: 6px; background: var(--warn-soft);
+         color: var(--warn-text); border: 1px solid rgba(176,106,0,.3); display: flex;
+         flex-direction: column; gap: 6px; align-items: flex-start; }
+.d-allnone { margin: 8px 0; padding: 8px 12px; border-radius: 6px; font-size: 13px;
+             background: rgba(0,128,106,.06); border: 1px solid rgba(0,128,106,.18); }
+.card .actions { display: flex; gap: 12px; align-items: center; margin-top: 12px; padding-top: 0; border-top: none; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.tile { border: 1px solid var(--border); background: var(--mint); padding: 10px 12px; }
+.tile.ok { border-color: var(--good); }
+.tile.warn { border-color: var(--warn); }
+.tile .t-num { font-size: 22px; font-weight: 700; line-height: 1.1; }
+.tile.ok .t-num { color: var(--brand-dark); }
+.tile.warn .t-num { color: var(--warn-text); }
+.tile .t-lbl { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.pill { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 3px; white-space: nowrap; }
+.pill.ok { background: var(--good-soft); color: var(--brand-dark); }
+.pill.warn { background: var(--warn-soft); color: var(--warn-text); }
+.pill.bad { background: var(--bad-soft); color: var(--bad); }
+.pill.off { background: var(--mint-deep); color: var(--muted); }
+.msg { font-size: 11.5px; color: var(--ink-soft); line-height: 1.5; min-width: 260px; }
+.modal.wide { width: 620px; }
+.steps { font-size: 12px; color: var(--ink-soft); line-height: 1.8; margin: 0 0 12px; padding-left: 20px; }
+.steps code { font-family: ui-monospace, Consolas, monospace; color: var(--brand-dark); }
+.cmdbox { width: 100%; height: 180px; font-family: ui-monospace, Consolas, monospace;
+  font-size: 10px; line-height: 1.4; padding: 8px; border: 1px solid var(--border-strong);
+  background: var(--card); color: var(--ink); border-radius: 6px; resize: vertical; }
+.ahint { font-size: 10.5px; color: var(--muted); }
+</style>
