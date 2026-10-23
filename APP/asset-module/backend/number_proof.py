@@ -1,0 +1,423 @@
+"""[B-09] 數字可舉證——第一刀：納管漏斗的 5 個數字（2026-09-18）。
+
+總數、已納管、失聯、未涵蓋、AIX。每個數字要能回答三件事：
+1. **怎麼算的**（EXPLAIN：怎麼算、資料來源、已知限制、零的意義）——畫面 ⓘ 顯示
+2. **是哪幾台**——畫面點數字下鑽，筆數要跟數字一樣
+3. **對不對**——健檢頁：畫面值／獨立重算值／差異／差異解釋
+
+⚠️ 獨立重算（independent）**不准呼叫** manage_state.classify／pipeline.summarize 的判定邏輯：
+照規格（EXPLAIN 寫的定義）直接查資料表重寫一次。同一套程式寫兩次只會一致地錯，
+所以這裡刻意換一種寫法——逐台看「這台有沒有哪一筆符合定義」，而不是逐筆判狀態再挑代表。
+兩種寫法算出來不一樣時，差異逐台列出、自動歸因；歸不了因的標「未解釋」，那就是要查的 bug。
+
+唯一共用的是 system_stats.machine_key——「同一台」全站只能有一把尺（test_single_machine_key 守）。
+"""
+from __future__ import annotations
+
+import ipaddress
+import re
+
+import system_stats
+
+# 退役口徑是「定義」不是「判定邏輯」，全站只有一份（lifecycle.py）；判定仍在下面獨立重寫
+from lifecycle import RETIRED_STATUS as RETIRED
+# 已納管在漏斗上分成四關（收得到之後還差什麼）；合起來就是「已納管」
+ONBOARDED_STAGES = ["no_facts", "no_services", "no_accounts", "complete"]
+
+KEYS = ["total", "onboarded", "lost", "not_covered", "aix"]
+
+EXPLAIN = {
+    "total": {
+        "label": "總數",
+        "how": "每台機器算一次（主機名不分大小寫＋IP 相同＝同一台；同一台在 CIA 登記多筆只算一台）。"
+               "範圍＝CIA 清冊上的全部機器（含退役、帳外）＋最近一次掃描掃到但 CIA 沒登記的。",
+        "source": "hardware（CIA 清冊＋dynassets／vCenter 帳外）、scan_history（最近一次掃描）",
+        "limits": "主機名或 IP 缺一個、或 IP 是 0.0.0.0 佔位時，改用資產序號各算一台——同一台若兩筆都缺，會被算成兩台。",
+        "zero": "0＝CIA 還沒匯入、也還沒掃描過（沒資料），不是「沒有機器」。",
+    },
+    "onboarded": {
+        "label": "已納管",
+        "how": "沒標退役、收集帳號 7 天內連得上的機器（決策 EXIST1：跟 CIA 有沒有登記、這次掃不掃得到都無關）。"
+               "連得上＝試連成功且時間在 7 天內，或帳號收集／服務收集 7 天內收到資料。"
+               "連上過但超過 7 天＝「已納管但失聯」，不算在這裡。"
+               "漏斗上分四關：還沒收主機事實／還沒收服務／還沒盤帳號／資料齊全，四關加起來就是這個數。",
+        "source": "hardware.collect_ok／collect_checked_at、host_account.last_seen、host_service.last_seen（ssh_ss／winrm）",
+        "limits": "天數在 existence_rules.json（onboarded_days）。collect_ok=1 但沒有時間的舊資料＝時間不明，不算 7 天內。",
+        "zero": "0 要看有沒有試連過：一台都沒試過＝沒查；試過都連不上＝查過真的沒有。",
+    },
+    "lost": {
+        "label": "失聯",
+        "how": "CIA 有登記、沒標退役、近 N 天被掃過（網路掃描網段或 2-1 開始收集探測，每個位址取最新一次），"
+               "但沒有回應、收集帳號也從沒連上過的機器。"
+               "連上過的另算：7 天內＝已納管、超過 7 天＝已納管但失聯（EXIST1）。",
+        "source": "hardware、scan_history（最近一次掃描存活名單）、scan_coverage（各網段最近一次掃完）、"
+                  "collect_dispatch_result（2-1 開始收集每個位址最新一次）",
+        "limits": "掃描只探幾個固定埠＋ICMP，防火牆全擋的機器也會被算成失聯；"
+                  "標了非納管、或 SAN 收集／離線匯入過、而且收不到的設備不算失聯（本來就不靠掃描判定）；"
+                  "沒有 IP 的另列「沒有 IP（無法掃描）」，不算失聯——掃描本來就找不到它。",
+        "zero": "0 要看有沒有掃描紀錄：沒掃過＝沒查；掃過且涵蓋了這些網段＝查過真的沒有。",
+    },
+    "not_covered": {
+        "label": "未涵蓋",
+        "how": "CIA 有登記、沒標退役、沒掃到、收集帳號也從沒連上過，而且近 N 天根本沒被掃過的機器"
+               "（網路掃描各網段最近一次＋2-1 開始收集每個位址最新一次，合起來看；N＝2-1「幾天算舊」）——"
+               "我們沒有證據說它在不在，要做的事是把網段加進掃描範圍，不是去機房找。",
+        "source": "hardware、scan_coverage（各網段最近一次成功掃完）、collect_dispatch_result（2-1 探測）",
+        "limits": "近 N 天兩種掃描都沒有任何涵蓋紀錄時，無法判斷涵蓋，退回看最近一次網路掃描（沒紀錄＝照舊算失聯、這裡是 0）。",
+        "zero": "0 要看有沒有涵蓋紀錄：沒有涵蓋紀錄＝沒查（全部被算進失聯）；有紀錄＝查過真的都涵蓋了。",
+    },
+    "aix": {
+        "label": "AIX",
+        "how": "CIA 上 OS 欄填 AIX 的機器（同一台多筆登記取漏斗代表那筆）；人工改過 OS 類型的以人工為準。",
+        "source": "hardware.os（CIA 清冊）、os_type_override（人工指定）",
+        "limits": "⚠️ 未登記的 AIX 從網路上分不出來（只看得到開了哪些埠），會被歸到其他類或「推測 Linux 類」。",
+        "zero": "0＝CIA 上沒有 OS 填 AIX 的機器（查過）；但未登記的 AIX 本來就數不到。",
+    },
+}
+
+
+def _net_list(conn, scan_time):
+    """這次掃描涵蓋的網段——直接讀 scan_coverage，不借 scan_scope 的函式。"""
+    if not scan_time:
+        return []
+    try:
+        rows = conn.execute("SELECT DISTINCT cidr FROM scan_coverage WHERE scan_time = ? AND ok = 1",
+                            (scan_time,)).fetchall()
+    except Exception:  # noqa: BLE001 - 舊庫沒這張表＝沒有涵蓋紀錄
+        return []
+    out = []
+    for (c,) in rows:
+        try:
+            out.append(ipaddress.ip_network(c, strict=False))
+        except (ValueError, TypeError):
+            pass
+    return out
+
+
+def _recent(conn) -> dict:
+    """近 N 天的涵蓋證據——直接查 scan_coverage／collect_dispatch_result，不借 scan_scope 的函式。
+    N＝2-1「幾天算舊」設定（app_settings.dispatch_stale_days，預設 collect_dispatch.DEFAULT_STALE_DAYS）。"""
+    from datetime import datetime as _dt, timedelta as _td
+
+    import collect_dispatch as _cd
+
+    try:
+        r = conn.execute("SELECT value FROM app_settings WHERE key = 'dispatch_stale_days'").fetchone()
+        days = int(r[0]) if r and str(r[0]).strip() else _cd.DEFAULT_STALE_DAYS
+    except Exception:  # noqa: BLE001 - 舊庫／值不是數字：用預設
+        days = _cd.DEFAULT_STALE_DAYS
+    days = min(3650, max(1, days))
+    cut = (_dt.now() - _td(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    nets = []
+    try:
+        for c, t in conn.execute("SELECT cidr, MAX(scan_time) FROM scan_coverage WHERE ok = 1 GROUP BY cidr"):
+            if t and str(t) >= cut:
+                try:
+                    nets.append(ipaddress.ip_network(c, strict=False))
+                except (ValueError, TypeError):
+                    pass
+    except Exception:  # noqa: BLE001 - 舊庫沒這張表
+        pass
+    probed, alive = set(), set()
+    try:
+        latest: dict = {}
+        for rid, ip, t, a in conn.execute("SELECT id, ip, created_at, alive FROM collect_dispatch_result"):
+            ip = (ip or "").strip()
+            if ip and (ip not in latest or rid > latest[ip][0]):
+                latest[ip] = (rid, t, a)
+        for ip, (_, t, a) in latest.items():
+            if t and str(t) >= cut:
+                probed.add(ip)
+                if a == 1:
+                    alive.add(ip)
+    except Exception:  # noqa: BLE001 - 舊庫沒這張表＝沒跑過 2-1
+        pass
+    return {"days": days, "nets": nets, "probed": probed, "alive": alive,
+            "has_evidence": bool(nets or probed)}
+
+
+def _addrs(raw) -> list:
+    """IP 欄裡認得出的位址（一格可能填好幾個）；0.0.0.0 佔位不算。自己拆，不借 manage_state.ips_of。"""
+    out = []
+    s = str(raw or "")
+    for ch in "／、,;/":
+        s = s.replace(ch, " ")
+    for tok in s.split():
+        try:
+            a = ipaddress.ip_address(tok)
+        except ValueError:
+            continue
+        if int(a) != 0:
+            out.append(a)
+    return out
+
+
+def _in_nets(addrs, nets) -> bool:
+    if not nets:
+        return True              # 沒有涵蓋紀錄：無法說它沒涵蓋
+    return any(a in n for a in addrs for n in nets)
+
+
+#: AIX 判定——**這裡刻意自己寫一份，不呼叫 manage_state.platform_from_os**。
+#: independent() 的存在意義就是「不靠主流程的程式碼再算一次」；共用同一份實作的話，
+#: 主流程判錯時這裡會**一致地錯**，對帳就形同虛設（本檔上方那條守門測試也擋著不准
+#: import manage_state）。2026-09-22 我差點照指示改成呼叫共用函式，是那條守門攔下來的。
+#:
+#: 但「獨立」不等於可以寫錯。`"aix" in os` 這種寫法在 AIX **納管成功之後**會失效：
+#: facts_collector 會把 os 覆寫成 `oslevel -s` 的輸出，例如 7200-05-09-2446，
+#: 那串裡沒有 aix 三個字。所以兩種型態都要認。
+_OSLEVEL_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(-\d{4})?$")
+
+
+def _is_aix(os_text: str | None) -> bool:
+    t = (os_text or "").strip().lower()
+    if not t:
+        return False
+    return "aix" in t or bool(_OSLEVEL_RE.match(t))
+
+
+def independent(conn) -> dict:
+    """照 EXPLAIN 的定義獨立重算。回 {key: set(machine_key)} 與佐證事實。"""
+    st = conn.execute("SELECT MAX(scan_time) FROM scan_history").fetchone()[0]
+    alive = conn.execute("SELECT ip, hostname FROM scan_history WHERE scan_time = ? AND scan_ok = 1",
+                         (st,)).fetchall() if st else []
+    a_ip = {r[0] for r in alive if r[0]}
+    a_hn = {r[1] for r in alive if r[1]}
+    nets = _net_list(conn, st)
+    rec = _recent(conn)
+    # 2-1 開始收集近 N 天有回應的位址也算「掃到」（2026-10-20）——只用在「資產庫裡這台有沒有被看到」，
+    # 不影響下面「只有收集看得到的 IP」那一桶（首頁那桶也只排除資產庫＋最近一次掃描，審查 #7）
+    seen_ip = a_ip | set(rec["alive"])
+    try:
+        exempt = {r[0] for r in conn.execute(
+            "SELECT asset_serial FROM onboard_exempt WHERE removed_at IS NULL")}
+    except Exception:  # noqa: BLE001
+        exempt = set()
+    try:
+        san_ips = {r[0] for r in conn.execute("SELECT ip FROM san_switch") if r[0]}
+    except Exception:  # noqa: BLE001
+        san_ips = set()
+
+    # EXIST1：已納管＝收集帳號 7 天內連得上。照定義直接查表（不借 existence.CollectIndex）
+    import json as _json
+    from datetime import datetime as _dt, timedelta as _td
+    from pathlib import Path as _P
+    _days = _json.loads((_P(__file__).with_name("existence_rules.json")).read_text(encoding="utf-8"))["onboarded_days"]
+    cut = (_dt.now() - _td(days=int(_days))).strftime("%Y-%m-%d %H:%M:%S")
+    col_ip: dict[str, str] = {}      # 帳號／服務收集看到的 IP → 最後時間
+    for sql in ("SELECT ip, MAX(last_seen) FROM host_account GROUP BY ip",
+                "SELECT ip, MAX(last_seen) FROM host_service WHERE source IN ('ssh_ss','winrm') GROUP BY ip"):
+        try:
+            for ip, t in conn.execute(sql):
+                if ip and t and t > col_ip.get(ip, ""):
+                    col_ip[ip] = t
+        except Exception:  # noqa: BLE001 - 舊 DB 沒這張表＝沒有這種證據
+            pass
+
+    machines: dict[str, list] = {}
+    hw_ip, hw_hn = set(), set()
+    for r in conn.execute("SELECT asset_serial, hostname, ip, os, asset_status, collect_ok, "
+                          "collect_checked_at FROM hardware"):
+        machines.setdefault(system_stats.machine_key(r[1], r[2], r[0]), []).append(r)
+        if r[2]:
+            hw_ip.add(r[2])
+            hw_ip.update(str(a) for a in _addrs(r[2]))
+        if r[1]:
+            hw_hn.add(r[1])
+    # 資產庫沒有的機器：沒序號，用 IP 佔位（不然沒主機名的全部變成同一個 sn:None）
+    unreg: dict[str, str] = {}
+    for ip, hn in alive:
+        if (ip and ip in hw_ip) or (hn and hn in hw_hn) or not (ip or hn):
+            continue
+        unreg[system_stats.machine_key(hn, ip, f"ip:{ip or ''}")] = ip
+    for ip in col_ip:
+        if ip in hw_ip or ip in a_ip:
+            continue
+        unreg[system_stats.machine_key(None, ip, f"ip:{ip}")] = ip
+
+    out = {k: set() for k in KEYS}
+    out["total"] = set(machines) | set(unreg)
+    for k, ip in unreg.items():
+        if col_ip.get(ip, "") >= cut:
+            out["onboarded"].add(k)
+    for k, rows in machines.items():
+        if any(_is_aix(r[3]) for r in rows):
+            out["aix"].add(k)
+        if any((r[4] or "").strip() in RETIRED for r in rows):
+            continue                      # 有任何一筆標退役：不屬於下面三個（退役或登記矛盾）
+        seen = any((r[2] and r[2] in seen_ip) or (r[1] and r[1] in a_hn)
+                   or any(str(a) in seen_ip for a in _addrs(r[2])) for r in rows)
+        ips = {str(a) for r in rows for a in _addrs(r[2])} | {r[2] for r in rows if r[2]}
+        fresh = (any(r[5] == 1 and (r[6] or "") >= cut for r in rows)
+                 or any(col_ip.get(i, "") >= cut for i in ips))
+        ever = any(r[5] == 1 for r in rows) or any(i in col_ip for i in ips)
+        if fresh:
+            out["onboarded"].add(k)       # 7 天內連得上：不看掃描（EXIST1）
+            continue
+        if ever:
+            continue                      # 連上過但過期＝已納管但失聯，不是失聯／未涵蓋
+        if seen:
+            continue
+        # 這次沒掃到；只有「豁免／SAN 收集過」的才不算——那些本來就不靠掃描判定
+        if any(r[0] in exempt for r in rows) or any(r[2] in san_ips for r in rows):
+            continue
+        if not any(_addrs(r[2]) for r in rows):
+            continue                      # 沒有可掃描的 IP：沒查，不算失聯也不算未涵蓋（另列「沒有 IP」）
+        if rec["has_evidence"]:
+            _cov = any(str(a) in rec["probed"] or any(a in n for n in rec["nets"])
+                       for r in rows for a in _addrs(r[2]))
+        else:
+            _cov = all(_in_nets(_addrs(r[2]), nets) for r in rows if _addrs(r[2]))
+        if _cov:
+            out["lost"].add(k)
+        else:
+            out["not_covered"].add(k)
+
+    tried = conn.execute("SELECT COUNT(*) FROM hardware WHERE collect_checked_at IS NOT NULL "
+                         "OR collect_ok IS NOT NULL").fetchone()[0]
+    return {"sets": out, "evidence": {
+        "scan_time": st, "alive": len(alive), "covered_segments": len(nets),
+        "recent_days": rec["days"], "recent_segments": len(rec["nets"]), "recent_probed": len(rec["probed"]),
+        "hardware_rows": sum(len(v) for v in machines.values()), "collect_tried_rows": tried,
+    }}
+
+
+def screen_sets(summary: dict) -> dict:
+    """畫面值：漏斗（pipeline.summarize）實際給畫面的那幾台，逐台 machine_key。"""
+    out = {k: set() for k in KEYS}
+    for it in summary["items"]:
+        sn = it.get("asset_serial") or f"ip:{it.get('ip') or ''}"   # 沒序號用 IP 佔位（同 independent）
+        k = system_stats.machine_key(it.get("hostname"), it.get("ip"), sn)
+        out["total"].add(k)
+        if it["stage"] in ONBOARDED_STAGES:
+            out["onboarded"].add(k)
+        if it["stage"] == "lost":
+            out["lost"].add(k)
+        if it["stage"] == "not_covered":
+            out["not_covered"].add(k)
+        if it.get("os_type") == "AIX":
+            out["aix"].add(k)
+    return out
+
+
+def zero_status(key: str, value: int, ev: dict) -> dict:
+    """這個數字是 0 的時候：查過真的沒有，還是沒查？非 0 也回（畫面 ⓘ 用得到）。"""
+    if key == "total":
+        checked = ev["hardware_rows"] > 0 or bool(ev["scan_time"])
+        why = "有 CIA 資料或掃描紀錄" if checked else "CIA 沒匯入、也沒掃描過"
+    elif key == "onboarded":
+        checked = ev["collect_tried_rows"] > 0
+        why = f"試連過 {ev['collect_tried_rows']} 筆" if checked else "收集試連一次都沒跑過"
+    elif key == "lost":
+        checked = bool(ev["scan_time"])
+        # 「查過」只對掃過的網段成立——只掃一段的 0 跟掃遍全公司的 0 不一樣，要講出來
+        why = (f"最近一次掃描 {ev['scan_time']}，只查了涵蓋的 {ev['covered_segments']} 段；其他網段的機器在「未涵蓋」"
+               if checked and ev["covered_segments"] else
+               f"最近一次掃描 {ev['scan_time']}（沒有涵蓋紀錄，視為全部都掃了）" if checked else "沒有任何掃描紀錄")
+    elif key == "not_covered":
+        checked = ev["covered_segments"] > 0
+        why = (f"這次掃描有 {ev['covered_segments']} 段涵蓋紀錄" if checked
+               else "這次掃描沒有涵蓋紀錄——無法判斷，全部照舊算失聯")
+    else:
+        checked = ev["hardware_rows"] > 0
+        why = "查了 CIA 的 OS 欄" if checked else "CIA 沒匯入"
+    text = None
+    if value == 0:
+        text = ("查過真的沒有" if checked else "沒查") + f"（{why}）"
+    return {"checked": checked, "why": why, "text": text}
+
+
+def _why(key: str, it: dict | None, ov: bool) -> str:
+    """差異逐台歸因：畫面怎麼判、為什麼跟重算不同。"""
+    if it is None:
+        return "畫面沒有這台（不在漏斗母體）"
+    st = it["stage"]
+    if key == "aix" and ov:
+        return "人工改過 OS 類型（以人工為準）"
+    if key == "aix":
+        if it.get("os_type") == "AIX":
+            return "重算看不到 AIX 字樣，畫面判成 AIX"
+        return f"同一台多筆登記的 OS 不一致，畫面代表那筆判成「{it.get('os_type')}」"
+    if st == "conflict":
+        return "畫面歸到「登記矛盾」（同一台有退役也有使用中）"
+    if st == "retired_alive":
+        return "畫面歸到「退役但仍在線」"
+    if st in ("exempt", "collected"):
+        return f"畫面歸到「{it.get('stage_label')}」（豁免／已收集的設備優先）"
+    return f"畫面歸到「{it.get('stage_label')}」——未解釋"
+
+
+def health(conn) -> dict:
+    """健檢頁：5 個數字的 畫面值／獨立重算值／差異／差異解釋。"""
+    import os_override
+    import pipeline
+
+    s = pipeline.summarize(conn)
+    scr = screen_sets(s)
+    ind = independent(conn)
+    ev = ind["evidence"]
+    by_key = {system_stats.machine_key(it.get("hostname"), it.get("ip"), it.get("asset_serial")): it
+              for it in s["items"]}
+    ovs = {k for k, it in by_key.items() if it.get("os_type_override")}
+
+    rows = []
+    for key in KEYS:
+        a, b = scr[key], ind["sets"][key]
+        only_screen, only_recalc = sorted(a - b), sorted(b - a)
+        groups: dict[str, list] = {}
+        for k in only_screen:
+            groups.setdefault("畫面有、重算沒有：" + _why(key, by_key.get(k), k in ovs), []).append(k)
+        for k in only_recalc:
+            groups.setdefault("重算有、畫面沒有：" + _why(key, by_key.get(k), k in ovs), []).append(k)
+        expl = [{"why": w, "n": len(ks), "unexplained": "未解釋" in w,
+                 "sample": [_brief(by_key.get(k), k) for k in ks[:20]]}
+                for w, ks in sorted(groups.items(), key=lambda x: -len(x[1]))]
+        rows.append({
+            "key": key, **EXPLAIN[key],
+            "screen": len(a), "recalc": len(b), "diff": len(a) - len(b),
+            "mismatch": len(only_screen) + len(only_recalc),
+            "explanations": expl,
+            "unexplained": sum(e["n"] for e in expl if e["unexplained"]),
+            "zero": zero_status(key, len(a), ev),
+        })
+    return {"scan_time": s.get("scan_time"), "evidence": ev, "numbers": rows}
+
+
+def _brief(it: dict | None, key: str) -> dict:
+    if it is None:
+        return {"machine": key}
+    return {"machine": key, "hostname": it.get("hostname"), "ip": it.get("ip"),
+            "asset_serial": it.get("asset_serial"), "stage_label": it.get("stage_label"),
+            "os_type": it.get("os_type")}
+
+
+def key_numbers(conn, summary: dict) -> dict:
+    """漏斗頁頂端 5 個數字＋ⓘ說明＋下鑽條件。數字直接從 summary 數，跟下面的表同一份。"""
+    ev = _evidence_light(conn, summary)
+    c = summary["counts"]
+    vals = {
+        "total": summary["total"],
+        "onboarded": sum(c.get(k, 0) for k in ONBOARDED_STAGES),
+        "lost": c.get("lost", 0),
+        "not_covered": c.get("not_covered", 0),
+        "aix": summary["os_counts"].get("AIX", 0),
+    }
+    drill = {
+        "total": {}, "onboarded": {"stages": ONBOARDED_STAGES}, "lost": {"stages": ["lost"]},
+        "not_covered": {"stages": ["not_covered"]}, "aix": {"os_type": ["AIX"]},
+    }
+    return {"items": [{"key": k, "value": vals[k], "drill": drill[k], **EXPLAIN[k],
+                       "zero": zero_status(k, vals[k], ev)} for k in KEYS]}
+
+
+def _evidence_light(conn, summary: dict) -> dict:
+    """ⓘ 用的佐證（便宜的幾個 COUNT，不跑獨立重算）。"""
+    st = summary.get("scan_time")
+    return {
+        "scan_time": st,
+        "covered_segments": len(_net_list(conn, st)),
+        "hardware_rows": conn.execute("SELECT COUNT(*) FROM hardware").fetchone()[0],
+        "collect_tried_rows": conn.execute(
+            "SELECT COUNT(*) FROM hardware WHERE collect_checked_at IS NOT NULL "
+            "OR collect_ok IS NOT NULL").fetchone()[0],
+    }
