@@ -1,0 +1,19 @@
+{
+  "_comment": "對帳橋（7 資料品質）的分類規則（2026-10-26）。分類是業務判斷、會變，放設定檔不寫死；改完重啟 webit3-api 即生效。有機櫃 U 位的機器（箱子、LPAR、元件、管理口、疑似登記錯誤）不在這裡判，一律照 rack_layout.rack_boxes（跟 4-5 同一份），這裡只管沒有機櫃 U 位的。",
+  "_howto": "mgmt_box_model_regex：os_class 判成「管理介面」但其實是一台實體設備（HMC、Serial Console），沒機櫃 U 位時這些不算管理口、算實體設備-其他。endpoint_*：沒有機櫃的桌機筆電；有機櫃的同一種東西算實體設備-其他。appliance_model_regex：4-5 同一個箱子的元件裡，型號是一體機的歸「一體機元件」。",
+  "mgmt_box_model_regex": "7063-cr|7042-cr|\\bhmc\\b|serial\\s*console",
+  "endpoint_os_regex": "windows\\s*(xp|7|8|8\\.1|10|11)\\b",
+  "endpoint_model_regex": "^pc$|desktop|laptop|notebook|筆電|筆記型|桌上型|桌機|optiplex|thinkpad|thinkcentre|latitude|elitebook|elitedesk|prodesk|probook|vostro|inspiron",
+  "endpoint_group_regex": "個人電腦",
+  "appliance_model_regex": "exadata|\\boda\\b|oracle\\s*database\\s*appliance",
+  "_storage_cell_why": "一體機元件裡跑 OS 的（DB 節點）算主機，儲存 cell 不算（使用者 2026-10-26）。主機名符合這個的當儲存 cell。",
+  "storage_cell_hostname_regex": "cel(l)?\\d|[-_]cell",
+  "_vm_mac_oui_why": "沒標 VM、也沒機櫃的登記，MAC（登記的或掃描看到的）開頭是這些＝VMware 虛擬網卡，當 VM 訊號。",
+  "vm_mac_oui": ["00:50:56", "00:0c:29", "00:05:69", "00:1c:14"],
+  "_vm_os_regex_why": "OS 字串是 vSphere 客體 OS 的寫法（「Microsoft Windows Server 2022 (64-bit)」「Other Linux (64-bit)」），只有 vCenter 會這樣寫，當 VM 訊號。",
+  "vm_os_regex": "\\((32|64)-bit\\)\\s*$",
+  "_empty_run_why": "對帳（掃描）：一次掃描一台都沒回。只掃這麼多段以內的＝那幾段可能整段斷線，照算涵蓋（那段的機器變搜不到）、畫面標紅；掃更多段的＝掃描器或網路壞了，跳過、用前一次有結果的。",
+  "empty_run_small_max_segments": 2,
+  "_empty_run_window_why": "小的 0 台補掃要在前後這麼多小時內有「掃到東西」的掃描，才算可能整段斷線；沒有＝掃描器當時整體沒回應，略過。",
+  "empty_run_alive_window_hours": 24
+}
