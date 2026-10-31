@@ -1,0 +1,1357 @@
+{
+ "generated": "2026-10-22",
+ "normalise_rules": [
+  "collapse all whitespace incl. newlines to one space, trim (e.g. \"Cisco\\nC9200L-48T-4X-E\" -> \"Cisco C9200L-48T-4X-E\")",
+  "canonical vendor case on first token: DELL/dell->Dell, cisco/CISCO->Cisco, JUNIPER->Juniper, Paloalto->Palo Alto, riverbed->Riverbed",
+  "\"Cisco-\" prefix separator normalised to \"Cisco \"",
+  "Fortinet variants (Fortinet_FG100D, FortinetFG-60F, Fortinet FortiGate 101F, Fortinet-FG-101F, FG-101F, FortiGate 100D-1/-2) -> \"Fortinet FG-<model>\"",
+  "Cisco licence/feature suffix dropped where hardware is identical: C9200L-48T-4X-E -> C9200L-48T-4X; C9300-48T-E/-A -> C9300-48T; C9300X-24Y-A/-E -> C9300X-24Y; ISR4451-X-AX/K9 and \"ISR4451-X Router\" -> ISR4451-X; WS-C3850-48T-E -> WS-C3850-48T",
+  "Cisco descriptive suffixes dropped: N9K-C93108TC-EX-48-UTP / -48p -> N9K-C93108TC-EX; N9K-C93180YC-EX-48p -> N9K-C93180YC-EX; \"Nexus 3548 Chassis\"/\"NEXUS-3548-SW\" -> Nexus 3548",
+  "Cisco typos fixed: WS-C2960X-24TDL -> WS-C2960X-24TD-L; \"Catalyst C2960X-48TD-L\" -> WS-C2960X-48TD-L; WS-C2960+48TC-L -> WS-C2960plus-48TC-L",
+  "Product-family names: \"ProLiant DL360 Gen10\" -> HPE DL360 Gen10; \"PowerEdge R6525\" -> Dell R6525",
+  "IBM/Lenovo System x same hardware merged: \"IBM x3650 M5\", \"Lenovo X3650M5\" -> Lenovo x3650 M5; \"Lenovo X3550 M5\" -> Lenovo x3550 M5",
+  "Oracle: \"Oracle Exadata X7\" and \"Oracle Exadata Exadata X7-2 HC\" -> Oracle Exadata X7-2",
+  "Storage: \"IBM Storage-FS5300\" -> IBM FlashSystem 5300; \"EMC UnityXT480F\" -> EMC Unity XT 480F; \"EMC UnityXT380\" -> EMC Unity XT 380",
+  "Generic descriptions (HPE Server, EMC Storage, IBM San Switch, DELL, IBM AS400, (VM)) kept as-is and flagged is_generic_description"
+ ],
+ "models": [
+  {
+   "model": "Dell R750",
+   "aliases": [
+    "DELL  R750",
+    "DELL R750",
+    "Dell R750"
+   ],
+   "vendor_model_name": null,
+   "rack_u": 2,
+   "psu_max_w": 2800,
+   "psu_count": 2,
+   "weight_kg": 35.3,
+   "plug": "C14 inlet (C13 cord) for 60 mm PSUs up to 1800 W; 86 mm 2400/2800 W PSUs inlet NOT confirmed by Dell (resellers say C20/C22)",
+   "plug_confidence": "low",
+   "depth_mm": 772.13,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "high",
+   "is_generic": false,
+   "system_level": null,
+   "note": "PSU options (TG): AC Platinum 800/1400/2400 W; AC Titanium 1100 W; HLAC Titanium 700/1800/2800 W; -48V DC 1100 W. 2800 W is high-line only; 2400 W derates to 1400 W at 100-120 V. Weight 35.3 kg = 12x3.5in chassis (TG table 15). Depth 772.13 mm with bezel (Dell shop page, via search excerpt); TG gives 736.29 mm ear-to-PSU-handle.",
+   "sources": [
+    {
+     "field": "rack_u,psu_max_w,weight_kg_max",
+     "url": "https://i.dell.com/sites/csdocuments/product_docs/en/poweredge-r750-technical-guide.pdf"
+    },
+    {
+     "field": "depth_mm",
+     "url": "https://www.dell.com/en-us/shop/ipovw/poweredge-r750"
+    }
+   ]
+  },
+  {
+   "model": "Dell R760",
+   "aliases": [
+    "DELL R760",
+    "Dell R760"
+   ],
+   "vendor_model_name": null,
+   "rack_u": 2,
+   "psu_max_w": 2800,
+   "psu_count": 2,
+   "weight_kg": 36.1,
+   "plug": "C14 inlet (C13 cord) for 60 mm PSUs up to 1800 W; 86 mm 2400/2800 W PSUs inlet NOT confirmed by Dell (resellers say C20/C22)",
+   "plug_confidence": "low",
+   "depth_mm": 772.13,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "high",
+   "is_generic": false,
+   "system_level": null,
+   "note": "[種子規則] psu_max_w 取 200–240V AC 可用最大 PSU 2800 W；研究原值 3200 W。 PSU options: 3200 W Titanium (277 VAC/336 HVDC only), 2800 W Titanium (200-240 V), 2400 W Platinum, 1800 W Ti, 1400 W Pt, 1400 W Ti 277V, 1100 W Ti, 1100 W -48V DC, 800 W Pt, 700 W Ti. Largest on a normal 200-240 V feed is 2800 W. Depth with bezel (758.29 without).",
+   "sources": [
+    {
+     "field": "all",
+     "url": "https://www.dell.com/en-ie/shop/ipovw/poweredge-r760"
+    }
+   ]
+  },
+  {
+   "model": "Aruba AP 515",
+   "aliases": [
+    "Aruba AP 515"
+   ],
+   "vendor_model_name": "Aruba AP-515",
+   "rack_u": null,
+   "psu_max_w": 20.8,
+   "psu_count": 1,
+   "weight_kg": 0.81,
+   "plug": "PoE (802.3at/bt; optional 12V DC adapter)",
+   "plug_confidence": "medium",
+   "depth_mm": 200,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "high",
+   "is_generic": false,
+   "system_level": null,
+   "note": "Ceiling/wall AP, not rack-mounted. psu_max_w = max worst-case power draw on 802.3at PoE (20.8 W), not a PSU rating; 802.3af with IPM = 13.5 W; DC-powered max 16-17 W (HPE sources disagree). Unit 200x200x46 mm, 810 g excl. mount bracket (shipping 1.01 kg). Official datasheet PDF (DS_AP510Series) returned 403; values taken from HPE QuickSpecs / HPE support pages via search snippets.",
+   "sources": [
+    {
+     "field": "psu_max_w",
+     "url": "https://support.hpe.com/hpesc/public/docDisplay?docId=a00067488en_us&page=GUID-E1382A13-8EC2-4EF8-A122-D0D76F252CFD.html&docLocale=en_US"
+    },
+    {
+     "field": "psu_max_w",
+     "url": "https://www.hpe.com/us/en/collaterals/collateral.a00054054enw.html"
+    },
+    {
+     "field": "weight_kg_max",
+     "url": "https://www.hpe.com/us/en/collaterals/collateral.a00054054enw.html"
+    },
+    {
+     "field": "depth_mm",
+     "url": "https://www.hpe.com/us/en/collaterals/collateral.a00054054enw.html"
+    }
+   ]
+  },
+  {
+   "model": "IBM AS400",
+   "aliases": [
+    "IBM AS400"
+   ],
+   "vendor_model_name": null,
+   "rack_u": null,
+   "psu_max_w": null,
+   "psu_count": null,
+   "weight_kg": null,
+   "plug": null,
+   "plug_confidence": null,
+   "depth_mm": null,
+   "vendor_move_required": true,
+   "vendor_move_reason": "IBM Power (IBM i) system - IBM/partner engineers normally handle de-install/relocation; exact model unknown",
+   "confidence": "low",
+   "is_generic": true,
+   "system_level": null,
+   "note": "Description, not a model: \"AS400\" is a platform name. Exact IBM Power machine type needed to get U/power/weight.",
+   "sources": []
+  },
+  {
+   "model": "Cisco C9200L-48T-4X",
+   "aliases": [
+    "Cisco\nC9200L-48T-4X-E",
+    "Cisco C9200L-48T-4X",
+    "Cisco C9200L-48T-4X-E"
+   ],
+   "vendor_model_name": "Cisco C9200L-48T-4X",
+   "rack_u": 1,
+   "psu_max_w": 125,
+   "psu_count": 1,
+   "weight_kg": 5.89,
+   "plug": "C15 cord (Cisco CAB-TA-*/CAB-C15-CBN C14-C15); PSU inlet type not stated by Cisco (C15 fits C14 or C16 inlet)",
+   "plug_confidence": "low",
+   "depth_mm": 329,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "medium",
+   "is_generic": false,
+   "system_level": null,
+   "note": "Height 1.73 in (4.4 cm) = 1RU. Field-replaceable PSU, default PWR-C5-125WAC (125 W); ships with 1, 2nd identical PSU optional (2 bays). Data sheet lists no alternative PSU for 48T models. Listed weight 4.53 kg (data sheet/HIG, unclear if incl. PSU); weight_kg_max = 4.53 + 2x0.68 kg PSU = conservative upper bound (derived). Depth 288 mm chassis, 329 mm chassis+FEP+fan.",
+   "sources": [
+    {
+     "field": "rack_u,depth_mm,weight,psu",
+     "url": "https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-9200-series-switches/nb-06-cat9200-ser-data-sheet-cte-en.html"
+    },
+    {
+     "field": "psu_max_w,psu weight,power cords",
+     "url": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9200/hardware/install/b-c9200-hig/technical_specifications.pdf"
+    }
+   ]
+  },
+  {
+   "model": "Cisco C9200L-48P-4X",
+   "aliases": [
+    "Cisco C9200L-48P-4X"
+   ],
+   "vendor_model_name": "Cisco C9200L-48P-4X",
+   "rack_u": 1,
+   "psu_max_w": 1000,
+   "psu_count": 1,
+   "weight_kg": 6.6,
+   "plug": "C15 cord (Cisco CAB-TA-*); inlet for PWR-C5-1KWAC reported as IEC C16 by resellers only",
+   "plug_confidence": "medium",
+   "depth_mm": 329,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "medium",
+   "is_generic": false,
+   "system_level": null,
+   "note": "1RU (1.73 in). Default PSU PWR-C5-1KWAC (1000 W); optional secondary PWR-C5-1KWAC or PWR-C5-715WDC (DC). PWR-C5-600WAC exists in family but not listed for this SKU. Listed weight 4.80 kg; weight_kg_max = 4.80 + 2x0.9 kg PSU = conservative upper bound (derived). C16 inlet claim is third-party only (low).",
+   "sources": [
+    {
+     "field": "rack_u,depth_mm,weight,psu options",
+     "url": "https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-9200-series-switches/nb-06-cat9200-ser-data-sheet-cte-en.html"
+    },
+    {
+     "field": "psu_max_w,psu weight,power cords",
+     "url": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9200/hardware/install/b-c9200-hig/technical_specifications.pdf"
+    },
+    {
+     "field": "plug (C16, third-party)",
+     "url": "https://www.networktigers.com/products/pwr-c5-1kwac-cisco-power-supply-new"
+    }
+   ]
+  },
+  {
+   "model": "Dell R740",
+   "aliases": [
+    "DELL R740",
+    "Dell R740"
+   ],
+   "vendor_model_name": null,
+   "rack_u": 2,
+   "psu_max_w": 2400,
+   "psu_count": 2,
+   "weight_kg": 28.6,
+   "plug": "C14 inlet (C13 cord) for 495-1600 W PSUs; 2000/2400 W PSUs C20 inlet (C19 cord) per resellers, not confirmed by Dell",
+   "plug_confidence": "low",
+   "depth_mm": 715.5,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "medium",
+   "is_generic": false,
+   "system_level": null,
+   "note": "PSU options (R750 TG comparison table): AC Platinum 495/750/1100/1600/2000/2400 W, AC Titanium 750 W, DC 1100 W, HVDC 750/1100 W. 2400 W derates to 1400 W at 100-120 V. Weight 28.6 kg = 3.5in-drive chassis max (Dell owner manual via search excerpt; Dell PDF returned 403). Depth 715.5 mm from Dell manual excerpt.",
+   "sources": [
+    {
+     "field": "psu_max_w",
+     "url": "https://i.dell.com/sites/csdocuments/product_docs/en/poweredge-r750-technical-guide.pdf"
+    },
+    {
+     "field": "weight_kg_max,depth_mm",
+     "url": "https://downloads.dell.com/topicspdf/poweredge-r740_Owners-Manual2_en-us.pdf"
+    }
+   ]
+  },
+  {
+   "model": "Dell R660",
+   "aliases": [
+    "DELL R660",
+    "Dell R660"
+   ],
+   "vendor_model_name": null,
+   "rack_u": 1,
+   "psu_max_w": 1800,
+   "psu_count": 2,
+   "weight_kg": 22.51,
+   "plug": "C14 inlet (C13 cord) - Dell 60 mm PSU family, not stated on spec page",
+   "plug_confidence": "low",
+   "depth_mm": 822.88,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "high",
+   "is_generic": false,
+   "system_level": null,
+   "note": "PSU options: 1800 W Ti, 1400 W Pt, 1100 W Ti, 1100 W -48V DC, 800 W Pt, 700 W Ti. Depth with bezel (809.04 without).",
+   "sources": [
+    {
+     "field": "all",
+     "url": "https://www.dell.com/en-in/shop/ipovw/poweredge-r660"
+    }
+   ]
+  },
+  {
+   "model": "HPE DL380 Gen10",
+   "aliases": [
+    "HPE DL380 Gen10"
+   ],
+   "vendor_model_name": "HPE DL380 Gen10",
+   "rack_u": 2,
+   "psu_max_w": 1600,
+   "psu_count": 2,
+   "weight_kg": 24.5,
+   "plug": "C14 inlet (C13 cord)",
+   "plug_confidence": "medium",
+   "depth_mm": 730.2,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "high",
+   "is_generic": false,
+   "system_level": null,
+   "note": "PSU options (Flex Slot): 500W Platinum, 800W Platinum/Titanium/Universal(200-277VAC)/-48VDC, 1600W Platinum (200-240VAC only). Weight max 24.5 kg = 12LFF, 2 CPU, 2 PSU; 8SFF max 19.5 kg. Depth: LFF 730.2 mm (28.75in), SFF 679.4 mm (26.75in). QuickSpecs: pre-configured servers and each AC PSU kit ship with 6ft C13/C14 jumper cord.",
+   "sources": [
+    {
+     "field": "all",
+     "url": "https://www.hpe.com/psnow/doc/a00008180enw.pdf (HPE QuickSpecs a00008180enw, fetched via assets.ext.hpe.com/is/content/hpedam/a00008180enus)"
+    }
+   ]
+  },
+  {
+   "model": "Lenovo x3650 M5",
+   "aliases": [
+    "IBM x3650 M5",
+    "Lenovo X3650M5",
+    "Lenovo x3650 M5"
+   ],
+   "vendor_model_name": "Lenovo System x3650 M5 (8871)",
+   "rack_u": 2,
+   "psu_max_w": 1500,
+   "psu_count": 2,
+   "weight_kg": 34,
+   "plug": "C14 inlet (C13 cord)",
+   "plug_confidence": "medium",
+   "depth_mm": 755,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "high",
+   "is_generic": false,
+   "system_level": null,
+   "note": "PSU options: 550W/750W/900W Platinum AC, 750W Titanium AC, 1300W Titanium (200-240V), 1500W Platinum (200-240V), 900W -48VDC; max 2. Weight min 19 kg / max 34 kg. TopSeller models ship with 2.8m IEC 320-C13 to C14 rack cords; the same System x 1500W PSU (00MV211) ships with C13-C14 cord per x3550 M5 guide.",
+   "sources": [
+    {
+     "field": "all",
+     "url": "https://lenovopress.lenovo.com/lp0068"
+    },
+    {
+     "field": "plug (same PSU family)",
+     "url": "https://lenovopress.lenovo.com/lp0067.pdf"
+    }
+   ]
+  },
+  {
+   "model": "HPE DL360 Gen10",
+   "aliases": [
+    "HPE DL360 Gen10",
+    "ProLiant DL360 Gen10"
+   ],
+   "vendor_model_name": "HPE DL360 Gen10",
+   "rack_u": 1,
+   "psu_max_w": 1600,
+   "psu_count": 2,
+   "weight_kg": 16.78,
+   "plug": "C14 inlet (C13 cord)",
+   "plug_confidence": "medium",
+   "depth_mm": 749.8,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "medium",
+   "is_generic": false,
+   "system_level": null,
+   "note": "Same Flex Slot PSU family as DL380 Gen10: 500W, 800W (Platinum/Titanium/Universal/-48VDC), 1600W Platinum (high line only). Weight: SFF max 16.27 kg, LFF max 16.78 kg. Depth: SFF 707 mm, LFF 749.8 mm (LFF figure from HPE Product Information/Physical specs page). Values taken from HPE QuickSpecs via search excerpts; QuickSpecs PDF itself timed out on direct fetch. Plug assumed same as DL380 Gen10 QuickSpecs statement (Flex Slot AC kits ship with C13/C14 jumper) - medium.",
+   "sources": [
+    {
+     "field": "weight/depth/psu",
+     "url": "https://www.hpe.com/us/en/collaterals/collateral.a00008159enw.html"
+    },
+    {
+     "field": "depth LFF",
+     "url": "https://cdn.support.hpe.com/hpesc/public/docDisplay?docId=a00018801en_us&page=GUID-AC628011-BA67-4CDA-AA7C-F8A338DC6989.html"
+    },
+    {
+     "field": "plug",
+     "url": "https://www.hpe.com/psnow/doc/a00008180enw.pdf"
+    }
+   ]
+  },
+  {
+   "model": "EMC Storage",
+   "aliases": [
+    "EMC Storage"
+   ],
+   "vendor_model_name": null,
+   "rack_u": null,
+   "psu_max_w": null,
+   "psu_count": null,
+   "weight_kg": null,
+   "plug": null,
+   "plug_confidence": null,
+   "depth_mm": null,
+   "vendor_move_required": true,
+   "vendor_move_reason": "Storage array - vendor (Dell EMC) engineers normally required for relocation; exact model unknown",
+   "confidence": "low",
+   "is_generic": true,
+   "system_level": null,
+   "note": "Description, not a model (could be Unity/VNX/PowerMax/etc.).",
+   "sources": []
+  },
+  {
+   "model": "Aruba 2930F",
+   "aliases": [
+    "Aruba 2930F"
+   ],
+   "vendor_model_name": "Aruba 2930F",
+   "rack_u": 1,
+   "psu_max_w": 980,
+   "psu_count": null,
+   "weight_kg": 4.79,
+   "plug": null,
+   "plug_confidence": null,
+   "depth_mm": 324,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "medium",
+   "is_generic": false,
+   "system_level": null,
+   "note": "Variant unknown in DB; values are the max-power case JL558A (48G PoE+ 4SFP+ 740W): 1U, 4.39x44.25x32.42 cm, 4.79 kg, PoE budget 740 W, HPE 'maximum power rating' 980 W (this is the vendor max power rating, not a stated PSU output rating), idle 49.9 W, 9.2 A @100-127 VAC / 4.9 A @200-240 VAC. Non-PoE JL260A (48G 4SFP): 1U, 4.39x44.25x24.63 cm, 3.10 kg, max ~46.6 W (SKU mapping in QuickSpecs table not fully confirmed). PSU count and AC inlet type (C14 vs C16) not confirmed from an official page: HPE pages timed out / returned 403; left null.",
+   "sources": [
+    {
+     "field": "rack_u",
+     "url": "https://support.hpe.com/hpesc/public/docDisplay?docId=c05224712&page=GUID-3774C887-0646-4F48-B9AC-120A130071E8.html&docLocale=en_US"
+    },
+    {
+     "field": "weight_kg_max",
+     "url": "https://support.hpe.com/hpesc/public/docDisplay?docId=c05224712&page=GUID-3774C887-0646-4F48-B9AC-120A130071E8.html&docLocale=en_US"
+    },
+    {
+     "field": "depth_mm",
+     "url": "https://support.hpe.com/hpesc/public/docDisplay?docId=c05224712&page=GUID-3774C887-0646-4F48-B9AC-120A130071E8.html&docLocale=en_US"
+    },
+    {
+     "field": "psu_max_w",
+     "url": "https://www.hpe.com/us/en/collaterals/collateral.c05052929.html"
+    }
+   ]
+  },
+  {
+   "model": "Cisco WS-C2960X-48TD-L",
+   "aliases": [
+    "Cisco Catalyst C2960X-48TD-L",
+    "Cisco WS-C2960X-48TD-L"
+   ],
+   "vendor_model_name": "Cisco WS-C2960X-48TD-L",
+   "rack_u": 1,
+   "psu_max_w": null,
+   "psu_count": 1,
+   "weight_kg": 4.3,
+   "plug": "C14 inlet (C13 cord) - inferred from C13 cords listed",
+   "plug_confidence": "low",
+   "depth_mm": 279,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "high",
+   "is_generic": false,
+   "system_level": null,
+   "note": "Fixed internal PSU, no wattage rating published. AC input 100-240 VAC 1-0.5 A; power rating 0.049 kVA; DC output 12V/4A (~48 W, derived); measured max 47.8 W. External RPS 2300 supported at series level. 1.75 in = 1RU.",
+   "sources": [
+    {
+     "field": "all",
+     "url": "https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-2960-x-series-switches/data_sheet_c78-728232.html"
+    }
+   ]
+  },
+  {
+   "model": "Fortinet FG-61F",
+   "aliases": [
+    "Fortinet\nFG-61F",
+    "Fortinet FG-61F",
+    "Fortinet FG61F"
+   ],
+   "vendor_model_name": "Fortinet FortiGate 61F (FG-61F)",
+   "rack_u": null,
+   "psu_max_w": 36,
+   "psu_count": 1,
+   "weight_kg": 1.01,
+   "plug": "external adapter",
+   "plug_confidence": "medium",
+   "depth_mm": 160,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "high",
+   "is_generic": false,
+   "system_level": null,
+   "note": "Desktop / wall-mount form factor (datasheet: 'Form Factor Desktop'). External DC adapter rated 12 Vdc 3 A (=36 W), input 100-240 V AC; power consumption avg/max 17.2 W / 18.7 W. 38.5 x 216 x 160 mm (HxWxL). rack_u left null: datasheet names no rack kit; a Fortinet rack tray may exist but was not verified.",
+   "sources": [
+    {
+     "field": "psu_max_w",
+     "url": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/fortigate-fortiwifi-60f-series.pdf"
+    },
+    {
+     "field": "weight_kg_max",
+     "url": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/fortigate-fortiwifi-60f-series.pdf"
+    },
+    {
+     "field": "depth_mm",
+     "url": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/fortigate-fortiwifi-60f-series.pdf"
+    },
+    {
+     "field": "plug",
+     "url": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/fortigate-fortiwifi-60f-series.pdf"
+    }
+   ]
+  },
+  {
+   "model": "Cisco WS-C2960X-24TS-L",
+   "aliases": [
+    "Cisco WS-C2960X-24TS-L",
+    "cisco WS-C2960X-24TS-L"
+   ],
+   "vendor_model_name": "Cisco WS-C2960X-24TS-L",
+   "rack_u": 1,
+   "psu_max_w": null,
+   "psu_count": 1,
+   "weight_kg": 4.0,
+   "plug": "C14 inlet (C13 cord) - inferred from C13 cords listed",
+   "plug_confidence": "low",
+   "depth_mm": 279,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "high",
+   "is_generic": false,
+   "system_level": null,
+   "note": "Fixed internal PSU, no wattage rating published. Power rating 0.039 kVA; DC output 12V/4A; measured max 37.1 W.",
+   "sources": [
+    {
+     "field": "all",
+     "url": "https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-2960-x-series-switches/data_sheet_c78-728232.html"
+    }
+   ]
+  },
+  {
+   "model": "Cisco N9K-C93108TC-FX3P",
+   "aliases": [
+    "Cisco\nN9K-C93108TC-FX3P",
+    "Cisco N9K-C93108TC-FX3P"
+   ],
+   "vendor_model_name": "Cisco N9K-C93108TC-FX3P",
+   "rack_u": 1,
+   "psu_max_w": 1900,
+   "psu_count": 2,
+   "weight_kg": 10.43,
+   "plug": "1100W AC: C14 inlet (C13 or C15 cord, inferred from C13-C14 jumpers listed); 1900W AC: not stated",
+   "plug_confidence": "low",
+   "depth_mm": 535,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "high",
+   "is_generic": false,
+   "system_level": null,
+   "note": "PSU options: NXA-PAC-1100W-PE/PI (1100 W AC, 1.36 kg), NXA-PAC-1900W-PI (1900 W AC, 1.63 kg, 16 A @115V), NXA-PDC-715W-PI (715 W DC). 2 PSUs (1+1). Weight 7.26 kg bare, 10.43 kg with fans+PSUs (with 1900W PSUs ~+0.5 kg, derived). Depth 457 mm bare / 493 with fans / 535 with PSUs. Max draw 600 W.",
+   "sources": [
+    {
+     "field": "all",
+     "url": "https://www.cisco.com/c/en/us/td/docs/switches/datacenter/nexus9000/hw/n93108tc-fx3p-hig/cisco-nexus-93108tc-fx3p-nx-os-mode-switch-hardware-installation-guide/m_n93xxx_system_specs.html"
+    },
+    {
+     "field": "power draw",
+     "url": "https://www.cisco.com/c/en/us/products/collateral/switches/nexus-9000-series-switches/datasheet-c78-744052.html"
+    }
+   ]
+  },
+  {
+   "model": "Oracle Exadata X10M High Capacity 1/4 Rack",
+   "aliases": [
+    "Oracle Exadata X10M High Capacity 1/4 Rack"
+   ],
+   "vendor_model_name": "Oracle Exadata X10M High Capacity quarter rack",
+   "rack_u": null,
+   "psu_max_w": null,
+   "psu_count": 2,
+   "weight_kg": null,
+   "plug": null,
+   "plug_confidence": null,
+   "depth_mm": null,
+   "vendor_move_required": true,
+   "vendor_move_reason": "Engineered system; Oracle ACS must de-install/relocate/re-install to keep support and configuration validity.",
+   "confidence": "low",
+   "is_generic": false,
+   "system_level": {
+    "rack_u": 42,
+    "psu_max_w": null,
+    "weight_kg_max": null,
+    "depth_mm": null
+   },
+   "note": "WARNING: system_level values are for the WHOLE system/rack; asset records with this model are likely one per component (DB servers, storage cells, switches) - do not multiply. Per-record rack_u/psu/weight left null. Full 42U rack with 2 redundant PDUs (psu_count = PDUs). Oracle docs say for X6 and later use Oracle Exadata Configuration Assistant (OECA) for rack weight/power; the on-prem X10M datasheet (oracle.com) returned 403. Component data (official): DB server X10M 23.6 kg, 1.3 kW max; HC storage server X10M 33.6 kg, 1.5 kW max; quarter rack = 2 DB + 3 HC storage servers. Reference only (different product): Exadata Cloud@Customer X10M quarter rack 469.8 kg, 2000x600x1197 mm, 7.3-7.8 kW max. PDU rating depends on ordered PDU (single/three phase, low/high voltage) - not filled.",
+   "sources": [
+    {
+     "field": "component weight/power",
+     "url": "https://docs.oracle.com/en/engineered-systems/exadata-database-machine/dbmin/general-environmental-requirements-single-servers.html"
+    },
+    {
+     "field": "rack config/PDUs",
+     "url": "https://docs.oracle.com/en/engineered-systems/exadata-database-machine/dbmso/hardware-components-model.html"
+    },
+    {
+     "field": "OECA guidance",
+     "url": "https://docs.oracle.com/en/engineered-systems/exadata-database-machine/dbmin/rack-weights-oracle-exadata-database-machine.html"
+    }
+   ]
+  },
+  {
+   "model": "Oracle Exadata X7-2",
+   "aliases": [
+    "Oracle Exadata Exadata X7-2 HC",
+    "Oracle Exadata X7",
+    "Oracle Exadata X7-2"
+   ],
+   "vendor_model_name": "Oracle Exadata X7-2 quarter rack (High Capacity)",
+   "rack_u": null,
+   "psu_max_w": null,
+   "psu_count": 2,
+   "weight_kg": null,
+   "plug": null,
+   "plug_confidence": null,
+   "depth_mm": 1197,
+   "vendor_move_required": true,
+   "vendor_move_reason": "Engineered system; Oracle ACS must de-install/relocate/re-install to keep support and configuration validity.",
+   "confidence": "medium",
+   "is_generic": false,
+   "system_level": {
+    "rack_u": 42,
+    "psu_max_w": null,
+    "weight_kg_max": 413.2,
+    "depth_mm": 1197
+   },
+   "note": "WARNING: system_level values are for the WHOLE system/rack; asset records with this model are likely one per component (DB servers, storage cells, switches) - do not multiply. Per-record rack_u/psu/weight left null. Full 42U rack, 2 redundant PDUs, 2 DB + 3 storage servers. Net weight 413.2 kg (HC); shipping 571.9 kg. Max power 4.3 kW (4.4 kVA), typical 3.0 kW (3.1 kVA). Rack 2000 H x 600 W mm; depth 1197 mm (datasheet) / 1235 mm with doors (install guide). psu_max_w left null: rack PDU kVA depends on ordered PDU option. Values obtained from Oracle docs via search excerpts (datasheet PDF returned 403 on direct fetch).",
+   "sources": [
+    {
+     "field": "weight/dimensions",
+     "url": "https://docs.oracle.com/cd/F25229_01/dbmin/installation-and-configuration-guide-exadata-database-machine.pdf"
+    },
+    {
+     "field": "power/depth",
+     "url": "https://www.oracle.com/technetwork/database/exadata/exadata-x7-2-ds-3908482.pdf"
+    }
+   ]
+  },
+  {
+   "model": "HPE Server",
+   "aliases": [
+    "HPE Server"
+   ],
+   "vendor_model_name": null,
+   "rack_u": null,
+   "psu_max_w": null,
+   "psu_count": null,
+   "weight_kg": null,
+   "plug": null,
+   "plug_confidence": null,
+   "depth_mm": null,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "low",
+   "is_generic": true,
+   "system_level": null,
+   "note": "Description, not a model.",
+   "sources": []
+  },
+  {
+   "model": "Fortinet FG-101F",
+   "aliases": [
+    "FG-101F",
+    "Fortinet\nFG-101F",
+    "Fortinet FG-101F",
+    "Fortinet FortiGate 101F",
+    "Fortinet-FG-101F"
+   ],
+   "vendor_model_name": "Fortinet FortiGate 101F (FG-101F)",
+   "rack_u": 1,
+   "psu_max_w": null,
+   "psu_count": 2,
+   "weight_kg": 3.43,
+   "plug": null,
+   "plug_confidence": null,
+   "depth_mm": 254,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "high",
+   "is_generic": false,
+   "system_level": null,
+   "note": "Rack mount 1 RU, 44 x 432 x 254 mm. Dual built-in non-hot-swappable AC PSUs (datasheet: dual power supply redundancy). PSU output rating not stated; power consumption avg/max 35.3 W / 39.1 W, max current 100V/1A, 240V/0.5A. Source is the official Fortinet datasheet (Simplified Chinese edition, 2019); English URL returned 404. AC inlet type not stated.",
+   "sources": [
+    {
+     "field": "rack_u",
+     "url": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/zh_cn/fortigate-100f-series.pdf"
+    },
+    {
+     "field": "psu_count_typical",
+     "url": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/zh_cn/fortigate-100f-series.pdf"
+    },
+    {
+     "field": "weight_kg_max",
+     "url": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/zh_cn/fortigate-100f-series.pdf"
+    },
+    {
+     "field": "depth_mm",
+     "url": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/zh_cn/fortigate-100f-series.pdf"
+    }
+   ]
+  },
+  {
+   "model": "IBM San Switch",
+   "aliases": [
+    "IBM San Switch"
+   ],
+   "vendor_model_name": null,
+   "rack_u": null,
+   "psu_max_w": null,
+   "psu_count": null,
+   "weight_kg": null,
+   "plug": null,
+   "plug_confidence": null,
+   "depth_mm": null,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "low",
+   "is_generic": true,
+   "system_level": null,
+   "note": "Description, not a model (IBM-branded Brocade SAN switch).",
+   "sources": []
+  },
+  {
+   "model": "Dell",
+   "aliases": [
+    "DELL",
+    "Dell"
+   ],
+   "vendor_model_name": null,
+   "rack_u": null,
+   "psu_max_w": null,
+   "psu_count": null,
+   "weight_kg": null,
+   "plug": null,
+   "plug_confidence": null,
+   "depth_mm": null,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "low",
+   "is_generic": true,
+   "system_level": null,
+   "note": "Vendor name only, no model.",
+   "sources": []
+  },
+  {
+   "model": "Lenovo x3550 M5",
+   "aliases": [
+    "Lenovo X3550 M5",
+    "Lenovo x3550 M5"
+   ],
+   "vendor_model_name": "Lenovo System x3550 M5 (8869)",
+   "rack_u": 1,
+   "psu_max_w": 1500,
+   "psu_count": 2,
+   "weight_kg": 19.3,
+   "plug": "C14 inlet (C13 cord)",
+   "plug_confidence": "medium",
+   "depth_mm": 734,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "high",
+   "is_generic": false,
+   "system_level": null,
+   "note": "PSU options: 550W Platinum, 750W Platinum, 750W Titanium (200-240V), 900W Platinum, 900W -48VDC, 1500W Platinum (200-240V); 1-2 identical PSUs. Weight min 13.8 / max 19.3 kg. AC PSU options ship with 2.8m IEC 320-C13 to C14 rack cable.",
+   "sources": [
+    {
+     "field": "all",
+     "url": "https://lenovopress.lenovo.com/lp0067.pdf"
+    }
+   ]
+  },
+  {
+   "model": "Cisco N9K-C93108TC-EX",
+   "aliases": [
+    "Cisco  N9K-C93108TC-EX-48p",
+    "Cisco N9K-C93108TC-EX",
+    "Cisco N9K-C93108TC-EX-48-UTP"
+   ],
+   "vendor_model_name": "Cisco N9K-C93108TC-EX",
+   "rack_u": 1,
+   "psu_max_w": 650,
+   "psu_count": 2,
+   "weight_kg": 10.68,
+   "plug": "650W AC: C14 inlet (C13 cord); 1200W HVAC/HVDC: different cord (not C13), not confirmed",
+   "plug_confidence": "low",
+   "depth_mm": 571,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "high",
+   "is_generic": false,
+   "system_level": null,
+   "note": "[種子規則] psu_max_w 取 200–240V AC 可用最大 PSU 650 W；研究原值 1200 W。 PSU options: NXA-PAC-650W-PE/PI (650 W AC), N9K-PUV-1200W (1200 W HVAC/HVDC), 930 W DC (NXA-PDC-930W-PE/PI, UCS-PSU-6332-DC, UCSC-PSU-930WDC). Largest standard AC = 650 W. 2 PSUs (1+1). Weight max derived: chassis 8.0 + 4 fans x0.12 + 2 PSU x1.1 = 10.68 kg. Typical 290 W / max 499 W.",
+   "sources": [
+    {
+     "field": "all",
+     "url": "https://www.cisco.com/c/en/us/td/docs/switches/datacenter/nexus9000/hw/n93108tcex_hig/guide/b_c93108tcex_nxos_mode_hardware_install_guide/b_c93108tcex_nxos_mode_hardware_install_guide_appendix_0111.html"
+    }
+   ]
+  },
+  {
+   "model": "HP SAN Switch",
+   "aliases": [
+    "HP SAN Switch"
+   ],
+   "vendor_model_name": null,
+   "rack_u": null,
+   "psu_max_w": null,
+   "psu_count": null,
+   "weight_kg": null,
+   "plug": null,
+   "plug_confidence": null,
+   "depth_mm": null,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "low",
+   "is_generic": true,
+   "system_level": null,
+   "note": "Description, not a model.",
+   "sources": []
+  },
+  {
+   "model": "Cisco WS-C2960X-48TS-L",
+   "aliases": [
+    "Cisco WS-C2960X-48TS-L"
+   ],
+   "vendor_model_name": "Cisco WS-C2960X-48TS-L",
+   "rack_u": 1,
+   "psu_max_w": null,
+   "psu_count": 1,
+   "weight_kg": 4.2,
+   "plug": "C14 inlet (C13 cord) - inferred from C13 cords listed",
+   "plug_confidence": "low",
+   "depth_mm": 279,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "high",
+   "is_generic": false,
+   "system_level": null,
+   "note": "Fixed internal PSU, no wattage rating published. Power rating 0.051 kVA; DC output 12V/5A (~60 W, derived); measured max 49.7 W.",
+   "sources": [
+    {
+     "field": "all",
+     "url": "https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-2960-x-series-switches/data_sheet_c78-728232.html"
+    }
+   ]
+  },
+  {
+   "model": "Cisco C9200L-48T-4G",
+   "aliases": [
+    "Cisco C9200L-48T-4G"
+   ],
+   "vendor_model_name": "Cisco C9200L-48T-4G",
+   "rack_u": 1,
+   "psu_max_w": 125,
+   "psu_count": 1,
+   "weight_kg": 5.89,
+   "plug": "C15 cord (Cisco CAB-TA-*/CAB-C15-CBN C14-C15); PSU inlet type not stated by Cisco",
+   "plug_confidence": "low",
+   "depth_mm": 329,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "medium",
+   "is_generic": false,
+   "system_level": null,
+   "note": "Same chassis data as C9200L-48T-4X: 1RU, default PWR-C5-125WAC (125 W) FRU, 2nd optional. Listed weight 4.53 kg; max derived = 4.53 + 2x0.68.",
+   "sources": [
+    {
+     "field": "rack_u,depth_mm,weight,psu",
+     "url": "https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-9200-series-switches/nb-06-cat9200-ser-data-sheet-cte-en.html"
+    },
+    {
+     "field": "psu_max_w,power cords",
+     "url": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9200/hardware/install/b-c9200-hig/technical_specifications.pdf"
+    }
+   ]
+  },
+  {
+   "model": "Cisco C9300-48T",
+   "aliases": [
+    "CISCO C9300-48T",
+    "Cisco\nC9300-48T-A",
+    "Cisco\nC9300-48T-E",
+    "Cisco C9300-48T"
+   ],
+   "vendor_model_name": "Cisco C9300-48T",
+   "rack_u": 1,
+   "psu_max_w": 1100,
+   "psu_count": 1,
+   "weight_kg": 9.05,
+   "plug": "C15 cord (Cisco CAB-TA-*/CAB-C15-*); inlet likely C16 (CAB-C15-CBN 13A jumper not rated for 1100W) - inferred",
+   "plug_confidence": "low",
+   "depth_mm": 488,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "medium",
+   "is_generic": false,
+   "system_level": null,
+   "note": "Default PSU PWR-C1-350WAC-P (350 W); upgrades 715 W and 1100 W (PWR-C1-1100WAC-P); DC PWR-C1-715WDC. 1900 W (PWR-C1-1900WAC-P) listed for C9300X; not confirmed for C9300-48T. Ships with 1, 2nd bay optional. Weight 7.45 kg with default PSU; max derived = 7.45 - 1.2 + 2x1.4 (1100W) = 9.05 kg. Depth 409 mm bare / 449 with default PSU / 488 with 1100W PSU. 1.73 in = 1RU.",
+   "sources": [
+    {
+     "field": "rack_u,depth,weight,psu options",
+     "url": "https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-9300-series-switches/nb-06-cat9300-ser-data-sheet-cte-en.html"
+    },
+    {
+     "field": "psu weight,power cords",
+     "url": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9300/hardware/install/b_c9300_hig/technical-specs.pdf"
+    }
+   ]
+  },
+  {
+   "model": "Fortinet FG-101E",
+   "aliases": [
+    "Fortinet FG-101E",
+    "Fortinet FortiGate 101E"
+   ],
+   "vendor_model_name": "Fortinet FortiGate 101E (FG-101E)",
+   "rack_u": 1,
+   "psu_max_w": null,
+   "psu_count": 1,
+   "weight_kg": 3.3,
+   "plug": null,
+   "plug_confidence": null,
+   "depth_mm": 254,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "medium",
+   "is_generic": false,
+   "system_level": null,
+   "note": "Rack mount 1 RU, 44.45 x 432 x 254 mm, 3.3 kg. Single internal AC PSU (100-240V AC); redundancy only via optional external FortiRPS-100 (FRPS-100). PSU output rating not stated; power consumption avg/max ~24.8 W / 27.5 W (column-to-model mapping of the power table in the extracted text is uncertain). Source is the official Fortinet datasheet, Korean edition; English URL returned 404. AC inlet type not stated.",
+   "sources": [
+    {
+     "field": "rack_u",
+     "url": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/ko_kr/ds-FortiGate100E-ko.pdf"
+    },
+    {
+     "field": "weight_kg_max",
+     "url": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/ko_kr/ds-FortiGate100E-ko.pdf"
+    },
+    {
+     "field": "depth_mm",
+     "url": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/ko_kr/ds-FortiGate100E-ko.pdf"
+    },
+    {
+     "field": "psu_count_typical",
+     "url": "https://www.fortinet.com/content/dam/fortinet/assets/data-sheets/ko_kr/ds-FortiGate100E-ko.pdf"
+    }
+   ]
+  },
+  {
+   "model": "Cisco ISR4451-X",
+   "aliases": [
+    "Cisco ISR4451-X",
+    "Cisco ISR4451-X Router",
+    "Cisco ISR4451-X-AX/K9"
+   ],
+   "vendor_model_name": "Cisco ISR4451-X",
+   "rack_u": 2,
+   "psu_max_w": 1000,
+   "psu_count": 1,
+   "weight_kg": 19.4,
+   "plug": null,
+   "plug_confidence": null,
+   "depth_mm": 475,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "medium",
+   "is_generic": false,
+   "system_level": null,
+   "note": "PSU options: PWR-4450-AC 450 W AC (default, ships 1; PWR-4450-AC/2 optional 2nd), 1000 W AC PoE PSU (PoE 500 W redundant / 950 W boost). HIG mentions an 1100 W figure in a weight row - inconsistent with data sheet (1000 W). Weight 13.1 kg (1x450W, no modules), 13.9 kg (1000W+PoE), 19.4 kg fully loaded. Depth 18.5 in (data sheet) / 18.7 in = 474.9 mm (HIG). AC input max 7.1-3.0 A (450 W). Inlet type not stated (null).",
+   "sources": [
+    {
+     "field": "rack_u,weight,psu,dimensions",
+     "url": "https://www.cisco.com/c/dam/global/en_vn/solutions/smb/velocity/Downloads/isr4400_datasheet.pdf"
+    },
+    {
+     "field": "depth (18.7 in),weight",
+     "url": "https://www.cisco.com/c/en/us/td/docs/routers/access/4400/hardware/installation/guide4400-4300/C4400_isr/Install_Connect.html"
+    },
+    {
+     "field": "psu part numbers",
+     "url": "https://www.cisco.com/c/en/us/products/collateral/routers/4000-series-integrated-services-routers-isr/guide_c07-728759.html"
+    }
+   ]
+  },
+  {
+   "model": "Cisco N9K-C93180YC-FX3",
+   "aliases": [
+    "Cisco\nN9K-C93180YC-FX3",
+    "Cisco N9K-C93180YC-FX3"
+   ],
+   "vendor_model_name": "Cisco N9K-C93180YC-FX3",
+   "rack_u": 1,
+   "psu_max_w": 650,
+   "psu_count": 2,
+   "weight_kg": 12.2,
+   "plug": "650W AC: C14 inlet (C13 cord); 1200W HVAC/HVDC: not confirmed",
+   "plug_confidence": "low",
+   "depth_mm": 496,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "medium",
+   "is_generic": false,
+   "system_level": null,
+   "note": "[種子規則] psu_max_w 取 200–240V AC 可用最大 PSU 650 W；研究原值 1200 W。 PSU options: NXA-PAC-650W-PE/PI (650 W AC), N9K-PUV-1200W (1200 W HVAC/HVDC), NXA-PDC-930W-PE/PI (930 W DC). Largest standard AC = 650 W. 2 PSUs (1+1). Chassis 9.52 kg (not stated whether incl. fans/PSU); max derived = 9.52 + 4x0.12 + 2x1.1 = 12.2 kg (conservative). Depth 19.5 in (496 mm), not stated whether incl. PSUs. Max draw 600 W. Source is the ACI-mode HIG (same hardware).",
+   "sources": [
+    {
+     "field": "all",
+     "url": "https://www.cisco.com/c/en/us/td/docs/dcn/hw/aci/nexus9000/93180yc-fx3s/cisco-nexus-93180yc-fx3-aci-mode-switch-hardware-installation-guide/m_n93xxx_system_specs.html"
+    },
+    {
+     "field": "power draw",
+     "url": "https://www.cisco.com/c/en/us/products/collateral/switches/nexus-9000-series-switches/datasheet-c78-744052.html"
+    }
+   ]
+  },
+  {
+   "model": "Juniper EX2200-24T-4G",
+   "aliases": [
+    "Juniper EX2200-24T-4G"
+   ],
+   "vendor_model_name": "Juniper EX2200-24T-4G",
+   "rack_u": 1,
+   "psu_max_w": 75,
+   "psu_count": 1,
+   "weight_kg": 2.7,
+   "plug": "C14 inlet (C13 cord)",
+   "plug_confidence": "medium",
+   "depth_mm": 267,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "high",
+   "is_generic": false,
+   "system_level": null,
+   "note": "1U, 4.45 x 44.5 x 26.7 cm, 2.7 kg. Single internal fixed AC PSU rated 75 W (Juniper PoE guide table, listed as EX2200-24T; the -4G suffix = same chassis with 4 SFP uplinks); max switch power consumption 50 W. Detachable AC cord with IEC 60320 C13 coupler (=> C14 inlet on chassis). Dimensions/weight/inlet from Juniper EX2200 Complete Hardware Guide (Japanese edition, 2011).",
+   "sources": [
+    {
+     "field": "psu_max_w",
+     "url": "https://www.juniper.net/documentation/us/en/software/junos/poe/topics/concept/poe-overview.html"
+    },
+    {
+     "field": "psu_count_typical",
+     "url": "https://www.juniper.net/documentation/en_US/release-independent/junos/information-products/pathway-pages/ex-series/rps/rps.pdf"
+    },
+    {
+     "field": "weight_kg_max",
+     "url": "https://www.juniper.net/content/dam/www/assets/eguides/jp/ja/ex2200-ethernet-switch-hardware-complete-guide.pdf"
+    },
+    {
+     "field": "depth_mm",
+     "url": "https://www.juniper.net/content/dam/www/assets/eguides/jp/ja/ex2200-ethernet-switch-hardware-complete-guide.pdf"
+    },
+    {
+     "field": "plug",
+     "url": "https://www.juniper.net/content/dam/www/assets/eguides/jp/ja/ex2200-ethernet-switch-hardware-complete-guide.pdf"
+    },
+    {
+     "field": "rack_u",
+     "url": "https://www.juniper.net/content/dam/www/assets/eguides/jp/ja/ex2200-ethernet-switch-hardware-complete-guide.pdf"
+    }
+   ]
+  },
+  {
+   "model": "Cisco N9K-C93180YC-EX",
+   "aliases": [
+    "Cisco N9K-C93180YC-EX",
+    "Cisco N9K-C93180YC-EX-48p"
+   ],
+   "vendor_model_name": "Cisco N9K-C93180YC-EX",
+   "rack_u": 1,
+   "psu_max_w": 650,
+   "psu_count": 2,
+   "weight_kg": 10.48,
+   "plug": "650W AC: C14 inlet (C13 cord); 1200W HVAC/HVDC: not confirmed",
+   "plug_confidence": "low",
+   "depth_mm": 571,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "high",
+   "is_generic": false,
+   "system_level": null,
+   "note": "[種子規則] psu_max_w 取 200–240V AC 可用最大 PSU 650 W；研究原值 1200 W。 PSU options: NXA-PAC-650W-PE/PI (650 W AC), N9K-PUV-1200W (1200 W HVAC/HVDC), 930 W DC variants. Largest standard AC = 650 W. 2 PSUs (1+1). Weight derived: chassis 7.8 + 4x0.12 + 2x1.1 = 10.48 kg. 17.5 x 22.5 x 1.72 in. Typical 210 W / max 470 W.",
+   "sources": [
+    {
+     "field": "all",
+     "url": "https://www.cisco.com/c/en/us/td/docs/switches/datacenter/nexus9000/hw/n93180ycex_hig/guide/b_n93180ycex_nxos_mode_hardware_install_guide/b_n93180ycex_nxos_mode_hardware_install_guide_appendix_0111.html"
+    }
+   ]
+  },
+  {
+   "model": "Cisco WS-C2960plus-48TC-L",
+   "aliases": [
+    "Cisco  WS-C2960+48TC-L",
+    "Cisco WS-C2960plus-48TC-L"
+   ],
+   "vendor_model_name": "Cisco WS-C2960+48TC-L",
+   "rack_u": 1,
+   "psu_max_w": null,
+   "psu_count": 1,
+   "weight_kg": 3.6,
+   "plug": null,
+   "plug_confidence": null,
+   "depth_mm": 242,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "high",
+   "is_generic": false,
+   "system_level": null,
+   "note": "Catalyst 2960-Plus 48TC-L. Fixed internal auto-ranging PSU (no wattage published); AC input 100-240 VAC 0.6-0.3 A; power rating 0.04 kVA; consumption ~30.6 W; RPS 2300 connector (12V 3A). 1.73 in = 1RU. Inlet type not stated (null).",
+   "sources": [
+    {
+     "field": "all",
+     "url": "https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-2960-plus-series-switches/data_sheet_c78-728003.html"
+    }
+   ]
+  },
+  {
+   "model": "IBM FlashSystem 5300",
+   "aliases": [
+    "IBM FlashSystem 5300",
+    "IBM Storage-FS5300"
+   ],
+   "vendor_model_name": "IBM FlashSystem 5300",
+   "rack_u": 1,
+   "psu_max_w": null,
+   "psu_count": 2,
+   "weight_kg": 19.5,
+   "plug": null,
+   "plug_confidence": null,
+   "depth_mm": 770,
+   "vendor_move_required": true,
+   "vendor_move_reason": "Storage array; IBM requires SSR/relocation service for de-install and move to preserve data integrity and warranty.",
+   "confidence": "low",
+   "is_generic": false,
+   "system_level": null,
+   "note": "1U, 12x NVMe, MTM 4662-7H2, one PSU per canister (2 total). Per-PSU rating not found; IBM Accelerate 2024 deck states '~1kW power requirement' for the system and '29in depth'. Weight 19.5 kg (12 drives fully configured) and depth 77 cm from an IBM community blog spec table whose layout is jumbled - treat as low confidence. Official hardware PDF guide exceeded fetch size limit.",
+   "sources": [
+    {
+     "field": "weight/depth",
+     "url": "https://community.ibm.com/community/user/blogs/sandra-teresa-pelaez-angeles2/2024/05/09/flashsystemspecifications"
+    },
+    {
+     "field": "power requirement/form factor",
+     "url": "https://www.ibm.com/support/pages/system/files/inline-files/2024%20Accelerate%20-%20Unleash%20the%20Power%20of%20the%20IBM%20FlashSystem%205300.pdf"
+    },
+    {
+     "field": "psu count",
+     "url": "https://www.redbooks.ibm.com/redpapers/pdfs/redp5734.pdf"
+    }
+   ]
+  },
+  {
+   "model": "IBM FlashSystem 5100",
+   "aliases": [
+    "IBM FlashSystem 5100"
+   ],
+   "vendor_model_name": "IBM FlashSystem 5100",
+   "rack_u": 2,
+   "psu_max_w": 2000,
+   "psu_count": 2,
+   "weight_kg": 45,
+   "plug": null,
+   "plug_confidence": null,
+   "depth_mm": null,
+   "vendor_move_required": true,
+   "vendor_move_reason": "Storage array; IBM requires SSR/relocation service for de-install and move to preserve data integrity and warranty.",
+   "confidence": "low",
+   "is_generic": false,
+   "system_level": null,
+   "note": "2U 24x2.5in NVMe control enclosure (2077/2078-4H4, UHB). PSU '2KW PSU (2)' from IBM Washington Systems Center Accelerate deck (not a spec sheet). Weight 45 kg is from the Storwize V5100 Quick Installation Guide ('fully populated enclosure weighs about 45 kg', 3-person lift); FS5100 is the rebranded V5100 hardware, but the statement is generic and may be conservative. Depth and inlet type not found in an accessible official source - left null. Expansion enclosures not included.",
+   "sources": [
+    {
+     "field": "psu",
+     "url": "https://www.ibm.com/support/pages/sites/default/files/inline-files/Accelerate_831_UpdateV3.pdf"
+    },
+    {
+     "field": "weight",
+     "url": "https://www.ibm.com/docs/en/STHGUJ_8.2.1/com.ibm.storwize.v5100.821.doc/fab3s_bkmap_quickinstbk.pdf"
+    }
+   ]
+  },
+  {
+   "model": "EMC Unity XT 480F",
+   "aliases": [
+    "EMC Unity XT 480F",
+    "EMC UnityXT480F"
+   ],
+   "vendor_model_name": "Dell EMC Unity XT 480F",
+   "rack_u": 2,
+   "psu_max_w": 1800,
+   "psu_count": 2,
+   "weight_kg": null,
+   "plug": "C14 inlet (C13 cord) at high line; spec sheet also lists IEC320-C20 for low line",
+   "plug_confidence": "medium",
+   "depth_mm": 795.5,
+   "vendor_move_required": true,
+   "vendor_move_reason": "Storage array; Dell requires its Deinstall/Reinstall (relocation) service to keep support and protect data.",
+   "confidence": "medium",
+   "is_generic": false,
+   "system_level": null,
+   "note": "DPE only (2U, 25x2.5in, 4 IO modules). Full system may add DAEs (25-drive 2.5in DAE: 2U, 10.0 kg empty, 432W max; 15-drive 3.5in DAE: 3U, 14.5 kg empty). Hardware Info Guide power: 480/480F 1800W high line / 1450W low line (PSU rating used). DPE max consumption 1060 VA (1050 W). Spec sheet weight is 'empty 25.90 kg' only - max configured weight not published, so null. Depth 79.55 cm. Spec sheet inlet table is layout-garbled: C14 for high line, C20 listed for low line.",
+   "sources": [
+    {
+     "field": "dimensions/weight/plug/consumption",
+     "url": "https://www.delltechnologies.com/assetlink/doc/en-gb/h17713-dell-emc-unity-xt-series-ss-en-dl1lj6v-original.pdf"
+    },
+    {
+     "field": "psu rating",
+     "url": "https://www.dell.com/support/manuals/en-us/unity-480f/unity_p_480_680_880_hardware_information_guide/technical-specifications?guid=guid-8b19fb23-d460-4476-8145-6e1103230c4b&lang=en-us"
+    }
+   ]
+  },
+  {
+   "model": "EMC SAN Switch",
+   "aliases": [
+    "EMC SAN Switch"
+   ],
+   "vendor_model_name": null,
+   "rack_u": null,
+   "psu_max_w": null,
+   "psu_count": null,
+   "weight_kg": null,
+   "plug": null,
+   "plug_confidence": null,
+   "depth_mm": null,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "low",
+   "is_generic": true,
+   "system_level": null,
+   "note": "Description, not a model (EMC-branded Brocade/Cisco MDS).",
+   "sources": []
+  },
+  {
+   "model": "Cisco WS-C2960S-48TD-L",
+   "aliases": [
+    "Cisco WS-C2960S-48TD-L",
+    "cisco WS-C2960S-48TD-L"
+   ],
+   "vendor_model_name": "Cisco WS-C2960S-48TD-L",
+   "rack_u": 1,
+   "psu_max_w": null,
+   "psu_count": 1,
+   "weight_kg": 4.3,
+   "plug": null,
+   "plug_confidence": null,
+   "depth_mm": 299,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "medium",
+   "is_generic": false,
+   "system_level": null,
+   "note": "Fixed internal PSU (no wattage rating published); AC input 100-240 VAC 1-0.5 A; consumption 55 W; power rating 0.09 kVA; RPS 2300 input. Dimensions 1.75 x 17.5 x 11.77 in (HIG) / 11.8 in (data sheet). End-of-life model. Inlet type not checked (null).",
+   "sources": [
+    {
+     "field": "weight,depth,power",
+     "url": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst2960/hardware/installation/guide_stack/2960SHIG/HIGSPEC.html"
+    },
+    {
+     "field": "dimensions",
+     "url": "https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-2960-s-series-switches/data_sheet_c78-726680.html"
+    }
+   ]
+  },
+  {
+   "model": "IBM x3550 M4",
+   "aliases": [
+    "IBM x3550 M4"
+   ],
+   "vendor_model_name": "IBM System x3550 M4",
+   "rack_u": 1,
+   "psu_max_w": 750,
+   "psu_count": 2,
+   "weight_kg": 15.9,
+   "plug": "C14 inlet (C13 cord)",
+   "plug_confidence": "medium",
+   "depth_mm": 734,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "high",
+   "is_generic": false,
+   "system_level": null,
+   "note": "PSU options: 550W Platinum AC (94Y6668), 750W Platinum AC (94Y6669), 750W -48VDC (94Y7631); 1-2 identical. Weight min 12.7 / max 15.9 kg. AC PSUs ship with 2.8m C13-C14 cord.",
+   "sources": [
+    {
+     "field": "all",
+     "url": "https://lenovopress.lenovo.com/tips0851"
+    }
+   ]
+  },
+  {
+   "model": "IBM S922",
+   "aliases": [
+    "IBM S922"
+   ],
+   "vendor_model_name": "IBM Power S922 (9009-22A)",
+   "rack_u": 2,
+   "psu_max_w": 1400,
+   "psu_count": 2,
+   "weight_kg": 30.4,
+   "plug": "C14 inlet (C13 cord)",
+   "plug_confidence": "medium",
+   "depth_mm": 766.5,
+   "vendor_move_required": true,
+   "vendor_move_reason": "IBM Power system; relocation/de-install normally done or supervised by IBM SSR (IBM relocation service) to keep maintenance coverage.",
+   "confidence": "medium",
+   "is_generic": false,
+   "system_level": null,
+   "note": "Two 1400W 200-240VAC PSUs (#EB2M). Max power consumption 1880W (6,416 Btu/h, 1.94 kVA). Dimensions 482 W x 766.5 D x 86.7 H mm, 30.4 kg (Redpaper gives a single weight, not min/max). Plug: IBM POWER9 server-to-PDU cord table lists C13/C14 (FC 6458 etc.) and C13/C20 cords (server end C13) -> server inlet C14; not an S922-specific statement, hence medium.",
+   "sources": [
+    {
+     "field": "dimensions/weight/psu",
+     "url": "https://www.redbooks.ibm.com/redpapers/pdfs/redp5497.pdf"
+    },
+    {
+     "field": "plug",
+     "url": "https://ibm.com/docs/9009-22A/p9had/p9had_powercords.htm"
+    }
+   ]
+  },
+  {
+   "model": "Dell R640",
+   "aliases": [
+    "DELL R640",
+    "Dell R640"
+   ],
+   "vendor_model_name": null,
+   "rack_u": 1,
+   "psu_max_w": 1600,
+   "psu_count": 2,
+   "weight_kg": 21.9,
+   "plug": "C14 inlet (C13 cord) - not stated in source",
+   "plug_confidence": "low",
+   "depth_mm": 772.67,
+   "vendor_move_required": false,
+   "vendor_move_reason": null,
+   "confidence": "medium",
+   "is_generic": false,
+   "system_level": null,
+   "note": "PSU options: 495 W Pt, 750 W Pt/Ti, 1100 W, 1600 W (1600 W derates to 800 W at 100-120 V). Depth 772.67 mm for 4x3.5/10x2.5 chassis, 721.91 mm for 8x2.5. From Dell technical guide copy hosted by a reseller + Dell es-mx owner manual (search excerpts).",
+   "sources": [
+    {
+     "field": "weight_kg_max,depth_mm",
+     "url": "https://pcserverandparts.com/content/Spec%20Sheets/Servers/Dell/Dell%20PowerEdge%20R640/Dell%20PowerEdge%20R640%20Technical%20Guide.pdf"
+    },
+    {
+     "field": "psu_max_w",
+     "url": "https://dl.dell.com/topicspdf/poweredge-r640_Owners-Manual2_es-mx.pdf"
+    }
+   ]
+  },
+  {
+   "model": "ODA X7-2 HA",
+   "aliases": [
+    "ODA X7-2 HA"
+   ],
+   "vendor_model_name": "Oracle Database Appliance X7-2 HA",
+   "rack_u": null,
+   "psu_max_w": null,
+   "psu_count": 2,
+   "weight_kg": null,
+   "plug": null,
+   "plug_confidence": null,
+   "depth_mm": 737,
+   "vendor_move_required": true,
+   "vendor_move_reason": "Oracle engineered system (appliance); Oracle recommends ACS/field service for relocation to retain support.",
+   "confidence": "medium",
+   "is_generic": false,
+   "system_level": {
+    "rack_u": 6,
+    "psu_max_w": 1200,
+    "weight_kg_max": 70.2,
+    "depth_mm": 737
+   },
+   "note": "WARNING: system_level values are for the WHOLE system/rack; asset records with this model are likely one per component (DB servers, storage cells, switches) - do not multiply. Per-record rack_u/psu/weight left null. 6RU = two 1RU X7-2 server nodes + one 4RU DE3-24C storage shelf (optional 2nd shelf +4RU = 10RU). 2 hot-plug PSUs per node and per shelf: node PSU 1200W, shelf PSU 580W. Weight 70.2 kg = 2 x 16.1 kg + 38.0 kg (sum of official per-component weights, base config). Depth: node 737 mm, shelf 558 mm. Power usage: node max 479W, shelf max 453W. Inlet type not stated in ODA docs -> null. vendor_move true is a judgment (engineered appliance), not a stated Oracle requirement.",
+   "sources": [
+    {
+     "field": "all",
+     "url": "https://docs.oracle.com/en/engineered-systems/oracle-database-appliance/18.7/cmins/overview-oracle-database-appliance.html"
+    }
+   ]
+  }
+ ]
+}

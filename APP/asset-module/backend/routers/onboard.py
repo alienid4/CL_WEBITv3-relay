@@ -1,0 +1,1888 @@
+from __future__ import annotations
+
+from _app_shared import *  # noqa: F401,F403 - 還原原本模組命名空間
+
+router = _RouteCollector()
+
+
+
+@router.post("/api/onboard")
+def onboard_endpoint(
+    body: OnboardBody,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """A：UI 一鍵納管。使用者在畫面輸入 sysctl 帳密 → 系統用它去目標機建 webit3scan。
+
+    ⚠️ 憑證不落地是寫死的底線：body.password 只傳給引擎、用完即丟——
+    不寫 DB、不寫 log、不進稽核紀錄。稽核只記帳號名、平台、成敗，不記密碼。
+    """
+    import manage_state
+    import onboard_engine
+
+    # Q96：挑了「已設定的 SSH 憑證」→ 伺服器端自己取帳密（前端不經手），只當這次 bootstrap 登入用。
+    # 打字輸入的密碼（沒挑憑證）走原本路徑，用完即丟，不變。
+    cred_name = (body.credential or "").strip() or None
+    if cred_name:
+        import credential_store
+
+        if not _can_edit_nav(session, conn):
+            raise HTTPException(403, "只有管理員可以使用已設定的收集憑證")
+        if body.platform not in ("linux", "aix"):
+            raise HTTPException(400, "已設定的 SSH 憑證只能用在 Linux／AIX 納管")
+        # 天條：VMware（ESXi／vCenter）不登入——先看登記與 2-1 的判定，連線後引擎還會再探測一次
+        import win_onboard
+        why = win_onboard.refusal(conn, body.ip, win_onboard._asset_for_ip(conn, body.ip))
+        if why:
+            credential_store.audit_use(conn, cred_name, body.ip, False, "拒用：" + why)
+            raise HTTPException(400, f"這台不能用憑證登入：{why}")
+        try:
+            body.username, body.password = credential_store.resolve_ssh_for_onboard(conn, cred_name, body.ip)
+        except credential_store.CredentialRefused as exc:
+            credential_store.audit_use(conn, cred_name, body.ip, False, "拒用：" + str(exc))
+            raise HTTPException(400, str(exc))
+    elif not body.username or not body.password:
+        raise HTTPException(400, "請輸入登入帳號與密碼，或改挑一組已設定的憑證")
+
+    collector_ip = onboard_engine.resolve_collector_ip(conn)
+    # 開一格進度：執行器會逐行把目標主機的輸出寫進去，畫面同時輪詢 /api/onboard/progress。
+    # 這支端點本身仍然是同步的（回傳最終結果），進度只是讓等待中的人看得到在做什麼。
+    onboard_engine.progress_start(body.ip)
+    try:
+        import onboard_bundle
+
+        try:
+            # ONBOARD-FLOW1：跟「下載 webit3_onboard.sh」逐位元組同一份（同 sha256）
+            bundle = (onboard_bundle.bundle_for(conn)
+                      if body.platform in ("linux", "aix") else None)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        result = onboard_engine.onboard(
+            script=bundle,
+            host=body.ip, platform=body.platform,
+            username=body.username, password=body.password,   # 用完即丟，下面不再引用
+            collector_ip=collector_ip,
+            # 建出來的帳號名要跟收集端之後拿去登入的一致，否則建完仍然連不進去。
+            # 設定若還是舊名 webit3scan → 建新名 webit3sc（重新納管＝遷移，2026-10-18）
+            account=manage_state.onboard_account(conn, body.platform),
+            # 帳號備註（/etc/passwd 的 GECOS）由管理者在設定頁填，不寫死在程式碼——
+            # 那裡面有員工編號與姓名，而 onboard_engine.py 會進公開 relay。
+            comment=onboard_engine.resolve_account_comment(conn),
+        )
+    finally:
+        onboard_engine.progress_done(body.ip)
+        body.password = ""        # 取出的明文到此為止
+    if cred_name:
+        credential_store.audit_use(conn, cred_name, body.ip, bool(result.ok),
+                                   f"納管({session['username']})：{result.stage}")
+    # 稽核：明確只寫無憑證的欄位。body.password 到這裡就結束生命週期，不進 SQL。
+    conn.execute(
+        "INSERT INTO onboard_audit (target_ip, platform, login_user, trigger, "
+        "triggered_by, ok, stage, message, output) VALUES (?,?,?,?,?,?,?,?,?)",
+        (body.ip, body.platform, body.username, "manual", session["username"],
+         1 if result.ok else 0, result.stage, result.message, result.output),
+    )
+    conn.commit()
+
+    # 納管成功後：
+    # 1) 「發現但沒登記」的主機要先補一筆最小資產，否則收到的 facts 無處可落。
+    #    只填系統知道的（IP／掃到的主機名／預設環境），業務欄位留空給人補。
+    # 2) 試連＋收 facts，讓使用者立刻看到狀態變「已納管」＋真 OS/序號進來。
+    post_note = None
+    collect_error: str | None = None
+    if result.ok:
+        try:
+            import manage_state
+            exists = conn.execute("SELECT 1 FROM hardware WHERE ip = ?", (body.ip,)).fetchone()
+            if not exists:
+                scan_hn = conn.execute(
+                    "SELECT hostname FROM scan_history WHERE ip = ? AND scan_ok = 1 "
+                    "ORDER BY scan_time DESC LIMIT 1", (body.ip,)).fetchone()
+                insert_hardware(
+                    conn, asset_serial=f"AUTO-{body.ip}", ip=body.ip,
+                    hostname=(scan_hn["hostname"] if scan_hn and scan_hn["hostname"] else None),
+                    # 環境／資產狀態不替它填（2026-10-20：只有 CIA 匯入寫，見 lifecycle.py）
+                )
+            # ⚠️ 只做剛納管的這一台。2026-08-28 實測：原本這兩行不帶條件，
+            # 等於每納管一台就把整個機隊重測＋重收一遍——畫面上腳本早就印完
+            # 「完成。」，計時器還在跑 97～120 秒，跑的全是別台的事。
+            # 成本是 N²，而明天要納管的是整個網段的幾百台。
+            # 全機隊刷新交給排程（refresh_collect_status 的 docstring 本來就這樣寫）。
+            # 同 IP 多筆登記：挑現役、已納管那筆（manage_state.serial_for_ip，全入口同一把尺）
+            _sn = manage_state.serial_for_ip(conn, body.ip)
+            serial_row = {"asset_serial": _sn} if _sn else None
+            # ROOTKEY1：腳本說 root 金鑰已佈 → 用 root 金鑰試連一次，真的進得去才記
+            # （要在收集之前，納管後那六樣才會用 root 收需要 root 的項目）。
+            # 自己一個 try：這步出事不可以把後面的試連、收 facts、六樣一起拖下水；也不可以靜默。
+            try:
+                import root_key
+
+                root_key.record_after_onboard(conn, body.ip, body.platform,
+                                              bool(getattr(result, "root_key", False)))
+            except Exception as exc:  # noqa: BLE001
+                post_note = f"（root 收集金鑰標記失敗：{exc}；照收集帳號繼續收）"
+                _log_onboard(conn, hardware_ip=body.ip, platform=body.platform,
+                             who=session["username"] if session else None, ok=False,
+                             stage="root_key", message=f"root 收集金鑰標記失敗：{exc}",
+                             trigger="manual", login_user=body.username)
+            # 收集帳號換新（2026-10-18）：收集器用新帳號實際連一次，連得上才把這台記成新帳號
+            # （腳本已在主機上驗過新帳號才刪舊的）。連不上要講出來，不可靜默。
+            try:
+                import collect_account_migration as cam
+
+                st = cam.settle_after_onboard(conn, body.ip, body.platform)
+                if st.get("ok") is False:
+                    post_note = (post_note or "") + f"（{st['error']}）"
+                    _log_onboard(conn, hardware_ip=body.ip, platform=body.platform,
+                                 who=session["username"] if session else None, ok=False,
+                                 stage="account", message=st["error"],
+                                 trigger="manual", login_user=body.username)
+            except Exception as exc:  # noqa: BLE001
+                post_note = (post_note or "") + f"（收集帳號換新那步失敗：{exc}）"
+            manage_state.refresh_collect_status(conn, only_ip=body.ip)
+            if serial_row:
+                # ⚠️ 2026-09-22：這裡原本**把回傳值丟掉**。
+                # 使用者原話：「AIX 我可以連線，畫面也顯示納管成功，納管後我沒看到
+                # 納管後的任何資訊跟畫面呈現，例如帳號、軟體、硬體資訊等等」。
+                # 原因就在這行：帳號確實建好了（result.ok=True → 畫面「納管成功」），
+                # 但緊接著的收集拿到 0 個欄位，而**沒有人看那個回傳值**——
+                # post_note 只在丟例外時才寫，「跑完了但什麼都沒收到」不算例外。
+                # 於是「連得上、報成功、資料全空」三件事同時成立，
+                # 使用者完全分不出是納管壞了還是這台真的沒有帳號。
+                collected = manage_state.collect_facts_into_assets(
+                    conn, only_serial=serial_row["asset_serial"])
+                if collected.get("updated", 0) < 1:
+                    os_row = conn.execute(
+                        "SELECT os FROM hardware WHERE asset_serial = ?",
+                        (serial_row["asset_serial"],)).fetchone()
+                    base = (collected["failed"][0]["error"]
+                            if collected.get("failed") else None)
+                    skip = next((f for f in collected.get("failed") or [] if f.get("skipped")), None)
+                    # 沒去收（VMware／退役／沒有登記）：直接講原因，不再 SSH 探 uname（VMware 天條）
+                    collect_error = (f"收集未執行：{skip['error']}" if skip else _collect_diagnosis(
+                        conn, body.ip, body.platform,
+                        os_row["os"] if os_row else None,
+                        collected.get("updated", 0), base))
+                    # 明確寫回「收不到」，不要停在上一次的舊狀態
+                    conn.execute(
+                        "UPDATE hardware SET collect_ok = 0, collect_checked_at = ?, "
+                        "collect_error = ? WHERE asset_serial = ?",
+                        (datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                         collect_error[:500], serial_row["asset_serial"]))
+                    # 納管紀錄也要留一筆，資產頁才看得到「這次是收集這步敗的」
+                    _log_onboard(conn, hardware_ip=body.ip, platform=body.platform,
+                                 who=session["username"] if session else None,
+                                 ok=False, stage="collect", message=collect_error,
+                                 trigger="manual", login_user=body.username)
+        except Exception as exc:  # noqa: BLE001
+            # 收集失敗不影響「納管本身已完成」這個事實，但**不可以靜默**：
+            # 原本是 `pass`，於是「跑了 90 秒然後全部失敗」跟「一切正常」
+            # 在畫面上長得一模一樣。至少要讓人看得到收尾這步出了事。
+            post_note = f"（納管成功，但納管後的試連／收集這步失敗：{exc}）"
+        # 納管後自動收一輪：規格／服務／軟體／帳號／OS 重建／組態檢核（2026-09-16、10-18 使用者：
+        # 「以後納管後 要自動跑一次」「納管時這些動作預設都要跑一次」）。
+        # **在背景跑**——納管端點本身已經要花數十秒，再同步收六樣會讓瀏覽器逾時。
+        # 結果寫進採集紀錄（kind=post_onboard），2-1 紀錄與資產頁都看得到每一樣的成敗。
+        # ⚠️ 2026-10-18：這段原本在上面的 try 裡、排在試連／收 facts 之後——那兩步只要丟一個
+        # 例外，六樣就**一樣都不跑、也沒有任何紀錄**。納管成功就一定要跑，所以搬到 try 外面。
+        # 先把上面的寫入（收集失敗的 collect_ok=0、納管紀錄）存下來：get_db 收尾只 close 不 commit，
+        # 不存的話這些會被整個回滾；而且背景執行緒開另一條連線寫入時，會被這條未提交的交易擋住。
+        conn.commit()
+        try:
+            import post_onboard
+
+            import manage_state
+
+            _sn = manage_state.serial_for_ip(conn, body.ip)   # 跟上面收 facts 同一筆
+            if _sn:
+                post_onboard.start(None, _sn, by=session["username"] if session else None)
+        except Exception as exc:  # noqa: BLE001 - 啟動不了也要講出來，不可以靜默
+            post_note = (post_note or "") + f"（納管後自動收集沒有啟動：{exc}）"
+
+    # 納管的目的是「之後收得到資料」。帳號建好但一個欄位都收不到，
+    # 對使用者而言就是失敗——顯示成功會讓他以為完成了，然後過幾天才發現什麼都沒有。
+    # （使用者 2026-09-22 就是這樣做了三次。）
+    # 所以這裡把兩件事分開回報：script_ok=腳本有沒有跑成，ok=這次納管有沒有達到目的。
+    if result.ok and collect_error:
+        return {
+            "ok": False, "script_ok": True, "stage": "collect",
+            "message": ("納管腳本執行成功（收集帳號已建立），"
+                        f"但納管後收不到任何資料。{collect_error}"),
+            "output": result.output,
+        }
+    message = result.message + (post_note or "")
+    return {"ok": result.ok, "script_ok": result.ok, "stage": result.stage,
+            "message": message, "output": result.output}
+
+
+@router.post("/api/onboard/revoke")
+def revoke_endpoint(
+    body: RevokeBody,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """取消納管：把這台上的收集帳號、金鑰、sudo 白名單收回來。
+
+    ## 為什麼要打 YES
+
+    這個動作**在目標主機上刪東西**，而且刪完之後這台就收不到資料了。
+    跟「再納管一次」不對稱——納管失敗頂多沒佈成功，撤銷失敗可能刪錯東西。
+    所以要一個「不會手滑」的確認：打字比按鈕難按錯。
+
+    ## 撤銷後的狀態不是「未納管」
+
+    `collect_ok` 設成 0 之外，`collect_error` 會寫明是**人主動撤銷**的，
+    不是「連不上」。這兩件事在畫面上都顯示成「收不到」，但一個是待辦、
+    一個是刻意的結果——分不出來的話，之後有人會跑去「修」一台你剛撤銷的機器。
+    """
+    if body.confirm != "YES":
+        raise HTTPException(400, "取消納管需要輸入 YES 確認")
+    import manage_state
+    import onboard_engine
+
+    onboard_engine.progress_start(body.ip)
+    try:
+        result = onboard_engine.revoke(
+            host=body.ip, platform=body.platform,
+            username=body.username, password=body.password,
+            # 收回的是這台上實際在用的收集帳號（每台一個答案；遷移過的是新帳號）
+            account=manage_state.account_for_ip(conn, body.ip, body.platform),
+        )
+    finally:
+        onboard_engine.progress_done(body.ip)
+
+    # 稽核：跟納管走同一張表，trigger 標 revoke 才分得出來。
+    # 「誰在什麼時候撤了哪一台」正是稽核會問的第三個問題。
+    conn.execute(
+        "INSERT INTO onboard_audit (target_ip, platform, login_user, trigger, "
+        "triggered_by, ok, stage, message, output) VALUES (?,?,?,?,?,?,?,?,?)",
+        (body.ip, body.platform, body.username, "revoke", session["username"],
+         1 if result.ok else 0, result.stage, result.message, result.output),
+    )
+    if result.ok:
+        # 撤銷成功 → 這台現在收不到，而且是**刻意**收不到。
+        conn.execute(
+            "UPDATE hardware SET collect_ok = 0, collect_checked_at = ?, "
+            "collect_error = ?, root_key_at = NULL WHERE ip = ?",
+            (datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+             f"已由 {session['username']} 取消納管（不是連線失敗）", body.ip),
+        )
+    conn.commit()
+    return {"ok": result.ok, "stage": result.stage, "message": result.message,
+            "output": result.output}
+
+
+@router.post("/api/agent/stage")
+def agent_stage(
+    body: AgentStageBody,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """核發一把新的 agent key，組出 Stage 1 要上傳的**資料**（呼叫端負責實際 SCP
+    上傳，這支端點本身不連任何主機）。asset_serial 必須已經是 hardware 表裡的一筆
+    資產——沒有資產記錄就沒地方掛這把 key。
+
+    ⚠️ 2026-08-28：這支端點**不再交出 push_agent.sh／install.sh**。
+    那兩支是程式碼，已經隨 bootstrap_watcher.sh 固定佈在目標主機的
+    /opt/webit3-agent/bin/ 了。舊版把它們當成「要上傳的檔案」交出去，配上 root
+    排程去 /tmp 撿東西執行，合起來就是本機提權（任何本機帳號都能讓 root 幫他裝
+    任意程式）——完整說明見 agent_scripts/install.sh 開頭。
+
+    現在投放目錄只收兩個資料檔。**如果還照舊版把腳本一起上傳，install.sh 的白名單
+    會把整個任務當成攻擊跡象拒絕**，所以這裡回一個 upload_dir 講清楚要放哪、放什麼。
+    """
+    exists = conn.execute(
+        "SELECT 1 FROM hardware WHERE asset_serial = ?", (body.asset_serial,)
+    ).fetchone()
+    if not exists:
+        raise HTTPException(404, "找不到這筆資產，請先建立資產記錄再種 agent")
+
+    key = agent_auth.issue_host_key(conn, body.asset_serial)
+    collector_url = f"http://{onboard_engine.resolve_collector_ip(conn)}:8000"
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return {
+        "asset_serial": body.asset_serial,
+        "upload_dir": f"/var/lib/webit3-agent/incoming/{body.asset_serial}_{stamp}",
+        "note": "兩個檔案寫完之後，最後才建一個空的 .ready 標記檔——先有 .ready "
+                "會讓 root 排程撿到上傳到一半的半成品。"
+                "不要上傳任何腳本：投放目錄只收資料，出現 .sh 整個任務會被拒絕。",
+        "files": {
+            "agent_key": key,
+            "collector_url": collector_url,
+        },
+    }
+
+
+@router.post("/api/agent/facts")
+def agent_facts(
+    body: AgentFactsBody,
+    asset_serial: str = Depends(require_host_key),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """Push agent 每日回報進來的資料。asset_serial 一律用 require_host_key 驗證出來的
+    那個，不信任 body 裡任何主機識別欄位——agent 只能寫自己的資料，這是防冒充的關鍵。
+    """
+    for m in body.metrics:
+        key = m.get("key")
+        if not key:
+            continue
+        conn.execute(
+            "INSERT INTO host_metric_latest (asset_serial, metric_key, value, unit, collected_at) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(asset_serial, metric_key) DO UPDATE SET "
+            "value = excluded.value, unit = excluded.unit, collected_at = excluded.collected_at, "
+            "received_at = datetime('now','localtime')",
+            (asset_serial, key, m.get("value"), m.get("unit"), m.get("collected_at")),
+        )
+    conn.commit()
+    return {"ok": True}
+
+
+@router.post("/api/onboard/batch-probe")
+def onboard_batch_probe(
+    body: BatchProbeBody,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """B：一批主機、同一帳號、多組候選密碼，回報「哪一組通」——不建帳號、
+    不執行任何納管腳本，純粹唯讀探測（借 uname -s 這行）。
+
+    2026-09-06 使用者的實際情境：機隊裡 root 密碼混了 A/B 兩種，不想一台
+    一台手動試。這支只回「第幾組密碼對」，body.passwords 到這裡就結束
+    生命週期，不進 SQL、不進稽核紀錄——跟 /api/onboard 的密碼不落地是
+    同一條底線。
+
+    ⚠️ 不落密碼不代表這支端點沒有風險：短時間對多台主機連續嘗試多組密碼，
+    形狀就是密碼噴灑攻擊，可能觸發目標機的帳號鎖定（fail2ban/PAM tally）。
+    數量大時前端要把這個風險講清楚，不能包裝成「安全的批次工具」。
+    """
+    import onboard_engine
+
+    if not body.ips:
+        raise HTTPException(400, "至少要給一台 IP")
+    if not body.passwords:
+        raise HTTPException(400, "至少要給一組密碼")
+    if len(body.ips) > 100:
+        raise HTTPException(400, "一次最多 100 台——數量再大，密碼噴灑的風險也跟著放大，分批做")
+
+    results = onboard_engine.batch_probe_credentials(
+        targets=[{"ip": ip} for ip in body.ips],
+        username=body.username, passwords=body.passwords)
+    matched = sum(1 for r in results if r["matched_password_index"] is not None)
+    return {"total": len(results), "matched": matched, "unmatched": len(results) - matched,
+            "results": results}
+
+
+@router.post("/api/onboard/precheck")
+def onboard_precheck(
+    body: PrecheckBody,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """預檢（只看不動，v1.468.9）：用人給的帳密**唯讀登入**，跑一鍵納管前同一支探測
+    （onboard_engine.probe_target）＋同一份平台白名單與 VMware 天條，回「可以納管／不會納管：原因」。
+
+    不建帳號、不佈金鑰、不改 sudoers、不跑納管腳本、不寫 onboard_audit。
+    密碼只活在這次呼叫，不進 SQL、log、回應——跟 /api/onboard／batch-probe 同一條底線。
+    還沒有任何一台登入成功就出現「登入被拒」→ 自動停止（避免帳號被鎖）。
+    """
+    import activity
+    import precheck_service
+
+    if not body.ips:
+        raise HTTPException(400, "至少要給一台 IP")
+    if not body.password:
+        raise HTTPException(400, "請輸入登入密碼")
+    if len(body.ips) > precheck_service.MAX_TARGETS:
+        raise HTTPException(400, f"一次最多 {precheck_service.MAX_TARGETS} 台——預檢會真的登入，分批做")
+    try:
+        import manage_state
+        import onboard_engine
+
+        # 一鍵納管用的同一組參數（收集器位址、各平台帳號名）——結論才會跟一鍵納管一致
+        out = precheck_service.run(
+            body.ips, body.username, body.password, platform=body.platform,
+            collector_ip=onboard_engine.resolve_collector_ip(conn),
+            accounts={p: manage_state.onboard_account(conn, p) for p in ("linux", "aix", "windows")})
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    try:
+        c = out["counts"]
+        activity.log(conn, username=session["username"] if session else None, ip=None, method="POST",
+                     path="/api/onboard/precheck", status=200, duration_ms=0,
+                     action=(f"預檢 {len(out['results'])} 台：可以納管 {c['可以納管']}、需改用 root {c['需改用 root']}、"
+                             f"不會納管 {c['不會納管']}、登不進去 {c['登不進去']}、未執行 {c['未執行（已停止）']}"))
+    except Exception:  # noqa: BLE001 - 操作紀錄寫不進去不擋預檢結果
+        pass
+    return out
+
+
+@router.get("/api/onboard/hint")
+def onboard_hint(
+    ip: str,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """納管前的平台研判——**即時探測，不信登記值**。
+
+    為什麼不用 hardware.os：登記的 OS 可能過時、可能是假資料（實例：.101 登記成
+    Ubuntu，實際 banner 是 OpenSSH_for_Windows）。拿錯平台的腳本去打，一定失敗。
+    這裡即時抓 SSH banner（不需帳密），banner 自報最準；並回報跟登記值是否衝突，
+    讓使用者看得到「畫面說 Ubuntu 但實測是 Windows」這種矛盾。
+    """
+    import fingerprint
+
+    banner = fingerprint.grab_banner(ip, 22)
+    scan = conn.execute(
+        "SELECT open_ports, os_guess FROM scan_history WHERE ip = ? AND scan_ok = 1 "
+        "ORDER BY scan_time DESC LIMIT 1", (ip,)).fetchone()
+    ports = [int(p) for p in (scan["open_ports"] or "").split(",") if p.strip().isdigit()] \
+        if scan else []
+    os_guess = scan["os_guess"] if scan else None
+    method = fingerprint.onboard_method(os_guess=os_guess, open_ports=ports, banner=banner)
+
+    registered = conn.execute("SELECT os FROM hardware WHERE ip = ?", (ip,)).fetchone()
+    registered_os = registered["os"] if registered else None
+    # 衝突：登記說 Linux 但實測 Windows（或反過來）
+    conflict = None
+    if registered_os and method["method"] in ("linux", "windows"):
+        reg_is_win = any(k in registered_os.lower() for k in ("windows", "microsoft"))
+        detected_win = method["method"] == "windows"
+        if reg_is_win != detected_win:
+            conflict = f"登記為「{registered_os}」，但實測是 {'Windows' if detected_win else 'Linux'}"
+
+    return {
+        "ip": ip,
+        "platform": method["method"] if method["method"] in ("linux", "windows") else "",
+        "confidence": method["confidence"],
+        "evidence": method["evidence"],
+        "banner": banner,
+        "registered_os": registered_os,
+        "conflict": conflict,
+    }
+
+
+@router.get("/api/credentials")
+def list_credentials(
+    session: sqlite3.Row = Depends(require_auth), conn: sqlite3.Connection = Depends(get_db)
+):
+    """列出收集用憑證——**永不含密碼，連密文都不給**。"""
+    import credential_store
+
+    return credential_store.list_public(conn)
+
+
+@router.post("/api/credentials")
+def save_credential(
+    body: CredentialBody,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """新增／更新收集用憑證（如 Windows WinRM 服務帳號）。
+
+    密碼加密後才進 DB，加密金鑰另存 0600 檔案（不在 DB 裡——DB 會被備份、被複製，
+    金鑰跟著走就等於沒加密）。回應只回 metadata。
+    """
+    import credential_store
+
+    if not _can_edit_nav(session, conn):      # save 是 upsert（同名會覆寫帳密），不能比 PUT 鬆
+        raise HTTPException(403, "只有管理員可以新增或覆寫收集憑證")
+    if not credential_store.valid_kind(body.kind):
+        raise HTTPException(400, "憑證類型只能是：" + "、".join(credential_store.KINDS))
+    if not (body.name or "").strip() or not (body.username or "").strip() or not body.password:
+        raise HTTPException(400, "名稱、帳號、密碼都要填")
+    existed = conn.execute("SELECT 1 FROM collect_credential WHERE name = ?", (body.name,)).fetchone() is not None
+    credential_store.save(conn, body.name, body.kind, body.username, body.password,
+                          scope=body.scope, note=body.note)
+    _credential_activity(conn, session, "POST", body.name,
+                         f"{'覆寫' if existed else '新增'}收集憑證「{body.name}」（類型 {body.kind}）")
+    return {"ok": True, "credentials": credential_store.list_public(conn)}
+
+
+def _credential_activity(conn, session, method: str, name: str, action: str) -> None:
+    """憑證異動寫稽核（誰、何時、哪一筆）——**不含密碼**。寫不進去不擋操作，印出來留痕。"""
+    import activity
+
+    try:
+        activity.log(conn, username=session["username"] if session is not None else "（登入停用）", ip=None, method=method,
+                     path=f"/api/credentials/{name}", status=200, duration_ms=0, action=action)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[credentials] activity log failed: {exc}")
+
+
+class CredentialEditBody(BaseModel):
+    username: str
+    scope: str | None = None
+    note: str | None = None
+    password: str | None = None      # 留空＝不改密碼
+
+
+@router.put("/api/credentials/{name}")
+def edit_credential(
+    name: str,
+    body: CredentialEditBody,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """編輯一組收集憑證（限管理員）：帳號、適用範圍、備註、（選填）密碼。名稱與類型不能改。回應永不含密碼。"""
+    import credential_store
+
+    if not _can_edit_nav(session, conn):
+        raise HTTPException(403, "只有管理員可以編輯收集憑證")
+    username = (body.username or "").strip()
+    if not username:
+        raise HTTPException(400, "帳號不能空白")
+    if not credential_store.update(conn, name, username, (body.scope or "").strip() or None,
+                                   (body.note or "").strip() or None, body.password or None):
+        raise HTTPException(404, "查無此憑證")
+    _credential_activity(conn, session, "PUT", name, f"編輯收集憑證「{name}」" + ("（含改密碼）" if body.password else ""))
+    return {"ok": True, "credentials": credential_store.list_public(conn)}
+
+
+# 測試憑證：同一組連續打錯會把網域帳號鎖掉（連帶其他 Windows 主機全部連不上），所以每組憑證限速＋失敗上限
+import threading as _threading
+
+_CRED_TEST_LOCK = _threading.Lock()
+_CRED_TEST_LAST: dict[str, float] = {}
+_CRED_TEST_FAILS: dict[str, list[float]] = {}
+_CRED_TEST_GAP_S = 5
+_CRED_TEST_MAX_FAILS = 3            # 30 分鐘內失敗 3 次就先停（網域鎖定原則常見門檻是 5～10 次）
+_CRED_TEST_WINDOW_S = 1800
+
+
+class CredentialTestBody(BaseModel):
+    ip: str | None = None        # winrm 必填（對哪一台登入）；whatsup／vrops／storage 不需要
+
+
+def _test_api_credential(conn, name: str, kind: str) -> dict:
+    """whatsup／vrops：只打各自的最小連線（登入＋讀一頁），不收集不改任何東西；storage：尚未支援真連線測試。
+    共用 winrm 測試的限速（5 秒一次、30 分鐘失敗 3 次先停），失敗訊息已去掉密碼。"""
+    import time
+
+    if kind == "storage":
+        return {"ok": False, "supported": False, "message": "尚未支援測試（儲存設備請直接到 SAN／HMC 收集頁用這組憑證收集）",
+                "credential": name}
+    with _CRED_TEST_LOCK:
+        now = time.time()
+        if now - _CRED_TEST_LAST.get(name, 0) < _CRED_TEST_GAP_S:
+            raise HTTPException(429, f"測太快了，請等 {_CRED_TEST_GAP_S} 秒再測")
+        fails = [t for t in _CRED_TEST_FAILS.get(name, []) if now - t < _CRED_TEST_WINDOW_S]
+        _CRED_TEST_FAILS[name] = fails
+        if len(fails) >= _CRED_TEST_MAX_FAILS:
+            raise HTTPException(429, f"這組憑證 30 分鐘內已失敗 {len(fails)} 次，先停止測試。請先確認帳號密碼，修好再測")
+        _CRED_TEST_LAST[name] = now
+    if kind == "whatsup":
+        import whatsup_service as svc
+    else:
+        import vrops_import as svc
+    res = svc.check_connection(conn, name)
+    with _CRED_TEST_LOCK:
+        if res.get("ok"):
+            _CRED_TEST_FAILS[name] = []
+        else:
+            _CRED_TEST_FAILS.setdefault(name, []).append(now)
+    return {"ok": bool(res.get("ok")), "supported": True, "message": str(res.get("message", ""))[:300], "credential": name}
+
+
+@router.post("/api/credentials/{name}/test")
+def test_credential(
+    name: str,
+    body: CredentialTestBody,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """測試一組 WinRM 憑證：只對你指定的那一台、只登入一次、只問「電腦名稱與目前登入身分」，不收集、不改任何東西。
+    限管理員；每組憑證 5 秒內只能測一次、30 分鐘內失敗 3 次就先停（避免把網域帳號鎖掉）。回應永不含密碼。"""
+    import time
+
+    import credential_store
+    import winrm_collector
+
+    if not _can_edit_nav(session, conn):
+        raise HTTPException(403, "只有管理員可以測試收集憑證")
+    kind = conn.execute("SELECT kind FROM collect_credential WHERE name = ?", (name,)).fetchone()
+    if kind is None:
+        raise HTTPException(404, "查無此憑證")
+    if kind["kind"] in ("whatsup", "vrops", "storage"):
+        return _test_api_credential(conn, name, kind["kind"])
+    if kind["kind"] != "winrm":
+        raise HTTPException(400, "這個類型的憑證不支援測試（只能測 WinRM、WhatsUp、Aria Operations）")
+    if not (body.ip or "").strip():
+        raise HTTPException(400, "要填一台要測試的 IP")
+    ip = _win_ip(body.ip)
+    # 只准測內網位址：憑證不能被拿去對外網／本機／鏈路本地送登入（NTLM 回應會外洩）
+    addr = ipaddress.ip_address(ip)
+    if not addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_unspecified:
+        raise HTTPException(400, "只能測試內網（私有）位址")
+    # 天條：VMware、另有納管方式的設備一律不登入（跟納管同一道判定）
+    import win_onboard
+    why = win_onboard.refusal(conn, ip, win_onboard._asset_for_ip(conn, ip))
+    if why:
+        raise HTTPException(400, f"這台不能用 Windows 憑證登入：{why}")
+    with _CRED_TEST_LOCK:        # 檢查＋佔名額在同一個臨界區：平行請求不能一起通過 5 秒閘門
+        now = time.time()
+        if now - _CRED_TEST_LAST.get(name, 0) < _CRED_TEST_GAP_S:
+            raise HTTPException(429, f"測太快了，請等 {_CRED_TEST_GAP_S} 秒再測（避免把帳號鎖掉）")
+        fails = [t for t in _CRED_TEST_FAILS.get(name, []) if now - t < _CRED_TEST_WINDOW_S]
+        _CRED_TEST_FAILS[name] = fails
+        if len(fails) >= _CRED_TEST_MAX_FAILS:
+            raise HTTPException(429, f"這組憑證 30 分鐘內已失敗 {len(fails)} 次，先停止測試（再試可能把網域帳號鎖掉）。"
+                                     "請先確認帳號密碼與網域前綴，修好再測")
+        got = credential_store.get_for_use(conn, name)
+        if got is None:
+            raise HTTPException(409, f"憑證「{name}」解不開（加密金鑰可能已更換），請重新輸入密碼")
+        _CRED_TEST_LAST[name] = now
+    user, pw = got
+    try:
+        out = winrm_collector._run(ip, user, pw, "$env:COMPUTERNAME; [Security.Principal.WindowsIdentity]::GetCurrent().Name",
+                                   20)
+        ok, message = True, "登入成功"
+        lines = [x.strip() for x in str(out).splitlines() if x.strip()]
+        host_name, run_as = (lines + ["", ""])[:2]
+        with _CRED_TEST_LOCK:
+            _CRED_TEST_FAILS[name] = []            # 登入成功＝帳密沒問題，失敗紀錄歸零
+    except Exception as exc:  # noqa: BLE001 - 登入失敗要如實回原因（不含密碼）
+        ok, message, host_name, run_as = False, str(exc)[:300], "", ""
+        if isinstance(exc, winrm_collector.WinRMAuthError):     # 只有「帳密被拒」算失敗；IP 打錯、連不到不算
+            with _CRED_TEST_LOCK:
+                _CRED_TEST_FAILS.setdefault(name, []).append(now)
+    finally:
+        pw = None
+    credential_store.audit_use(conn, name, ip, ok, "測試：" + message)
+    return {"ok": ok, "message": message, "ip": ip, "credential": name, "username": user,
+            "computer": host_name, "run_as": run_as}
+
+
+@router.delete("/api/credentials/{name}")
+def delete_credential(
+    name: str,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    import credential_store
+
+    if not _can_edit_nav(session, conn):
+        raise HTTPException(403, "只有管理員可以刪除收集憑證")
+    n = credential_store.delete(conn, name)
+    if not n:
+        raise HTTPException(404, "查無此憑證")
+    _credential_activity(conn, session, "DELETE", name, f"刪除收集憑證「{name}」")
+    return {"ok": True}
+
+
+@router.get("/api/onboard/script")
+def onboard_script(
+    platform: str,
+    fmt: str = "oneliner",
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """產生「在目標機本機自己跑」的一行指令，或給維運批次佈署的 Ansible playbook。
+
+    為什麼需要這條路：遠端納管要目標機的管理員帳密，但很多情況拿不到——
+    Windows 沒有維運帳號慣例、單機環境沒網域、或人就坐在那台機器前面（根本不用遠端）。
+    這時給他一行可貼的指令最實際，且**完全不需要任何密碼**。
+    腳本內容與遠端用的完全同一份（同一個引擎產出），不會有兩套行為分岔。
+
+    fmt=ansible（僅 Linux）：把同一組動作翻成 playbook，交給資安／維運一次佈完整批。
+    ⚠️ playbook 也是即時從收集公鑰組出來的，不是 repo 裡的靜態檔——換過金鑰之後
+    靜態檔會安靜地變成錯的（佈下去每台都成功，只是收集全部連不進來）。
+    AIX 沒有這個選項：Ansible 不支援 AIX，只能給可貼的腳本。
+    """
+    import onboard_engine
+
+    if platform not in ("linux", "aix", "windows"):
+        raise HTTPException(400, "platform 只接受 linux、aix 或 windows")
+    collector_ip = onboard_engine.resolve_collector_ip(conn)
+    import manage_state
+
+    # 舊名 webit3scan 一律建新名（重新納管＝遷移，腳本裡驗過新帳號才移除舊的）
+    account = manage_state.onboard_account(conn, platform)
+
+    if fmt == "ansible":
+        if platform != "linux":
+            raise HTTPException(
+                400, "Ansible playbook 只適用 Linux——AIX 不支援 Ansible（改用可貼的腳本），"
+                     "Windows 走 WinRM 不需要在目標機建帳號")
+        try:
+            content = onboard_engine.build_linux_playbook(
+                onboard_engine.collector_pubkey(), collector_ip, account,
+                onboard_engine.resolve_account_comment(conn))
+        except ValueError as exc:      # 收集金鑰還沒產生
+            raise HTTPException(400, str(exc))
+        return {
+            "platform": platform, "fmt": "ansible",
+            "filename": f"{account}_bootstrap.yml",
+            "content": content,
+            "note": "交給資安／維運：ansible-playbook -i <inventory> "
+                    f"{account}_bootstrap.yml",
+        }
+    if fmt != "oneliner":
+        raise HTTPException(400, "fmt 只接受 oneliner 或 ansible")
+
+    try:
+        script = onboard_engine.build_script(
+            platform, onboard_engine.collector_pubkey(), collector_ip, account,
+            onboard_engine.resolve_account_comment(conn))
+    except ValueError as exc:      # AIX 帳號名過長、或收集金鑰還沒產生
+        raise HTTPException(400, str(exc))
+    # ⚠️ 2026-08-28：拿掉 base64。這支產出的是**給人貼上去執行的**指令——
+    #
+    # 把腳本 base64 起來，執行的人**看不懂自己在跑什麼**（違反可稽核性），
+    # 同時 SOC 看到的是「有人在這台解碼一段東西餵給 root shell」，也就是投毒的樣子。
+    # 純文字反而三贏：貼的人看得懂、稽核查得到、SOC 不告警。
+    #
+    # 用 heredoc 包起來仍然是「一段貼上去就好」，但內容全程可讀。
+    if platform == "linux":
+        cmd = f"sudo bash -s <<'WEBIT3_EOF'\n{script}\nWEBIT3_EOF"
+        note = ("在該機器以可 sudo 的帳號貼上執行。內容是純文字，"
+                "貼之前可以先看過（已經是 root 的話把開頭的 sudo 去掉）")
+    elif platform == "aix":
+        # AIX 未必裝 sudo（常在 /opt/freeware/bin 或改用 RBAC），所以要求以 root 登入
+        cmd = f"ksh -s <<'WEBIT3_EOF'\n{script}\nWEBIT3_EOF"
+        note = "在該機器以 root 執行（AIX 未必裝 sudo，所以不走 sudo）"
+    else:
+        # PowerShell：直接貼腳本本文到「系統管理員 PowerShell」視窗。
+        # **貼上去執行的指令不受執行原則約束**（那管的是腳本檔），
+        # 所以不需要 -ExecutionPolicy Bypass，也不需要先把檔案寫到 TEMP。
+        cmd = script
+        note = ("在該機器開「系統管理員 PowerShell」，把下面整段貼進去。"
+                "不需要調整執行原則——貼上去的指令本來就不受它約束")
+    return {"platform": platform, "command": cmd, "note": note}
+
+
+# ===== ONBOARD-FLOW1：一支、跑一次的 webit3_onboard.sh（2026-10-18）=====
+
+@router.get("/api/onboard/bundle")
+def onboard_bundle_info(
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """webit3_onboard.sh 的版本與 sha256（畫面顯示、下載後核對用）。網頁一鍵納管跑的也是這一份。"""
+    import onboard_bundle
+    import onboard_engine
+
+    try:
+        text = onboard_bundle.bundle_for(conn)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"filename": onboard_bundle.FILENAME, "sha256": onboard_bundle.sha256_of(text),
+            "version": onboard_engine._script_version(), "size": len(text.encode("utf-8"))}
+
+
+@router.get("/api/onboard/bundle/download")
+def onboard_bundle_download(
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """下載 webit3_onboard.sh（純文字、LF 換行）。用 WinSCP 傳上去後 `sh webit3_onboard.sh`。"""
+    import onboard_bundle
+
+    try:
+        text = onboard_bundle.bundle_for(conn)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return Response(content=text.encode("utf-8"), media_type="text/x-shellscript; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{onboard_bundle.FILENAME}"',
+                             "X-Content-SHA256": onboard_bundle.sha256_of(text)})
+
+
+class PasteIssueBody(BaseModel):
+    ips: list[str]
+
+
+@router.post("/api/onboard/paste/issue")
+def onboard_paste_issue(
+    body: PasteIssueBody,
+    request: Request,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """「我沒有密碼：取得納管指令」：給一行指令（下載→驗 sha256→跑）＋下載檔，並把這批主機記成等待中——
+    使用者在主機上跑完，系統自己偵測、自己收（paste_watch），不用再按任何按鈕。
+
+    一行指令裡的下載網址帶權杖：綁這一批主機的 IP、30 分鐘有效，只換得到這支腳本。腳本沒有密碼／私鑰，
+    但有收集帳號備註與收集器（含備援）IP，所以才綁來源。完整性靠 sha256（從已登入的這個畫面拿到的值）。"""
+    import manage_state
+    import onboard_bundle
+    import onboard_engine
+    import paste_watch
+
+    if len(body.ips) > 500:
+        raise HTTPException(400, "一次最多 500 台")
+    try:
+        text = onboard_bundle.bundle_for(conn)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    sha = onboard_bundle.sha256_of(text)
+    tok = onboard_bundle.issue_token(body.ips)
+    port = request.url.port
+    host = onboard_engine.resolve_collector_ip(conn)
+    url = f"{request.url.scheme}://{host}{':' + str(port) if port else ''}/api/onboard/fetch/{tok}"
+    issued = paste_watch.issue(
+        conn, body.ips, session["username"] if session else None,
+        platform_of=lambda ip: manage_state.collect_platform_of(conn, ip, None))
+    return {"filename": onboard_bundle.FILENAME, "sha256": sha,
+            "version": onboard_engine._script_version(),
+            "one_liner": onboard_bundle.one_liner(url, sha), "expires_in": onboard_bundle.TOKEN_TTL,
+            "issued": issued}
+
+
+@router.get("/api/onboard/fetch/{token}")
+def onboard_fetch(token: str, request: Request, conn: sqlite3.Connection = Depends(get_db)):
+    """**公開端點**（主機上的 curl 沒有登入狀態）：憑權杖拿 webit3_onboard.sh。
+    權杖綁發出時勾的那批主機 IP（看連線來源位址）、30 分鐘有效、只換得到這支腳本；
+    權杖不對、過期、或不是從那批主機來的，一律 404，不透露任何東西。"""
+    import onboard_bundle
+
+    client = request.client.host if request.client else None
+    if not onboard_bundle.token_valid(token, client):
+        raise HTTPException(404, "not found")
+    text = onboard_bundle.bundle_for(conn)
+    return Response(content=text.encode("utf-8"), media_type="text/x-shellscript; charset=utf-8")
+
+
+@router.get("/api/onboard/paste/status")
+def onboard_paste_status(
+    ips: str = "",
+    check: bool = False,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """等待中主機的偵測狀態（**只讀**）。試連由排程在背景做（paste_watch.tick_in_background），
+    畫面每 20 秒輪詢這支不會觸發任何 SSH——舊的 check 參數保留相容但不再有作用（2026-10-18 審查）。"""
+    import paste_watch
+
+    lst = [i.strip() for i in ips.split(",") if i.strip()] or None
+    return {"rows": paste_watch.status(conn, lst)}
+
+
+@router.get("/api/onboard/progress")
+def onboard_progress(
+    ip: str,
+    session: sqlite3.Row = Depends(require_auth),
+):
+    """納管執行中的即時進度：目標主機現在做到哪一步。
+
+    為什麼需要（使用者 2026-08-16）：畫面原本只能顯示「已經幾秒」，而腳本本來就會
+    逐行印「已建立帳號」「佈署收集公鑰」這些話——資訊一直都在，只是被 subprocess
+    一次收完、等結束才回來。改成邊跑邊寫進進度表，這裡讀出來給畫面輪詢。
+
+    ⚠️ 只回腳本的 stdout，永不含憑證（腳本本身設計上就不含機密）。
+    """
+    return onboard_engine.progress_of(ip)
+
+
+@router.post("/api/onboard/verify")
+def onboard_verify(
+    body: OnboardVerifyBody,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """本機執行納管指令跑完後，立刻試連驗證——不用等重新掃描、不用猜「有沒有生效」。
+
+    使用者 2026-08-17 明確要求：「本機執行」這條路（PAM 代登、拿不到密碼那種情境）
+    使用者是在系統看不到的地方跑完指令，系統原本要等下一輪「重新掃描」才會發現這台，
+    完成與否完全不明顯。這支端點對單一 IP 立即試一次真收集，成功就直接看到
+    hostname/os，失敗就直接看到原因——不用等、不用猜。
+
+    跟 /api/onboard（帳密流程）不同：那支是「系統代你連進去執行納管腳本」，這支是
+    「你已經自己執行過了，系統只是幫你驗證有沒有生效」，語意完全不同，所以是獨立端點。
+    """
+    import manage_state
+
+    if body.platform not in ("linux", "aix", "windows"):
+        raise HTTPException(400, "platform 只接受 linux、aix 或 windows")
+
+    # 天條：VMware 設備（ESXi／vCenter）不驗證、不收集——連「用新帳號試連」都不做（2026-10-27；審查 N2：放在補 AUTO 登記之前，VMware 不留空殼登記）
+    import onboard_eligibility as _oe
+    _vm = _oe.vmware_targets(conn, [body.ip], reverse=True)
+    if _vm:
+        error = f"收集未執行：VMware 設備（ESXi／vCenter）不經 SSH 收集，資料來源：vCenter／RVTools（{_vm[body.ip]}）"
+        _log_onboard(conn, hardware_ip=body.ip, platform=body.platform,
+                     who=session["username"], ok=False, stage="verify", message=error)
+        conn.commit()
+        return {"ok": False, "asset_serial": manage_state.serial_for_ip(conn, body.ip), "error": error}
+
+    _sn = manage_state.serial_for_ip(conn, body.ip)   # 同 IP 多筆：現役、已納管那筆
+    if _sn:
+        asset_serial = _sn
+    else:
+        # 還沒有資產記錄（本機執行流程不像帳密流程會自動先補一筆）——
+        # 驗證的前提是「這台在系統裡掛得上號」，沒有就先補到最小記錄，跟
+        # /api/onboard 成功後的自動補記錄邏輯一致。
+        asset_serial = f"AUTO-{body.ip}"
+        conn.execute(
+            # 環境／資產狀態不替它填（2026-10-20：只有 CIA 匯入寫，見 lifecycle.py）
+            "INSERT OR IGNORE INTO hardware (asset_serial, ip) VALUES (?, ?)",
+            (asset_serial, body.ip),
+        )
+
+    # 驗證的本質就是「現在馬上試連一次」，不受之前 collect_ok 的舊狀態影響——
+    # 這正是使用者剛執行完腳本、還沒被任何排程重新探測過的那一刻。
+    #
+    # ⚠️ 2026-09-22 修正：這裡原本在**收集之前**就無條件 mark_collect_ok(=1)，
+    # 而且失敗那條 return 路徑沒有收回。症狀是「按驗證當下顯示已納管，
+    # 隔天排程探測又打回未納管」——使用者以為納管會自己失效。
+    # 現在改成：**先收集，成功才寫 1；失敗明確寫 0 並留下原因**。
+    # 收集帳號換新（2026-10-18）：先用新帳號實際連一次，連得上才把這台記成新帳號——
+    # 腳本已刪掉舊帳號的話，不先記就會拿舊帳號去收、一定失敗。
+    acct_note = None
+    try:
+        import collect_account_migration as cam
+
+        st = cam.settle_after_onboard(conn, body.ip, body.platform)
+        if st.get("ok") is False:
+            acct_note = st["error"]
+    except Exception as exc:  # noqa: BLE001 - 不可靜默
+        acct_note = f"收集帳號換新那步失敗：{exc}"
+    result = manage_state.collect_facts_into_assets(conn, only_serial=asset_serial)
+    row = conn.execute(
+        "SELECT hostname, os, device_model FROM hardware WHERE asset_serial = ?", (asset_serial,)
+    ).fetchone()
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if result["updated"] >= 1:
+        # [B-05] 成功寫整台（同一台的多筆登記一起），不只這一筆
+        manage_state.mark_collect_ok(conn, asset_serial, now)
+        _log_onboard(conn, hardware_ip=body.ip, platform=body.platform,
+                     who=session["username"], ok=True, stage="verify",
+                     message=f"本機執行後驗證成功：收到 {result['updated']} 個欄位")
+        conn.commit()
+        # 本機執行（貼指令）這條路驗證成功＝納管成功，跟帳密納管一樣要收一輪六樣
+        # （2026-10-18 審查補：原本只有帳密／批次／排程三條會跑，這條漏了）。背景跑、結果進 collect_log。
+        post_note = None
+        try:
+            import post_onboard
+
+            post_onboard.start(None, asset_serial, by=session["username"])
+        except Exception as exc:  # noqa: BLE001 - 啟動不了也要講出來，不可以靜默
+            post_note = f"納管後自動收集沒有啟動：{exc}"
+        return {
+            "ok": True, "asset_serial": asset_serial, "post_note": post_note,
+            "hostname": row["hostname"], "os": row["os"], "device_model": row["device_model"],
+        }
+
+    # 失敗：**明確寫回 0 並留原因**，不要停在上一次的舊狀態讓人以為還好好的
+    base_err = result["failed"][0]["error"] if result["failed"] else None
+    skip = next((f for f in result.get("failed") or [] if f.get("skipped")), None)
+    # 沒去收（VMware／退役／沒有登記）：直接講原因，不是「收到欄位=0」；也不再 SSH 探 uname（VMware 天條）
+    error = (f"收集未執行：{skip['error']}" if skip else
+             _collect_diagnosis(conn, body.ip, body.platform, row["os"] if row else None, result["updated"], base_err))
+    if acct_note:
+        error = f"{acct_note}；{error}"
+    conn.execute(
+        "UPDATE hardware SET collect_ok = 0, collect_checked_at = ?, collect_error = ? "
+        "WHERE asset_serial = ?", (now, error[:500], asset_serial))
+    _log_onboard(conn, hardware_ip=body.ip, platform=body.platform,
+                 who=session["username"], ok=False, stage="verify", message=error)
+    conn.commit()
+    return {"ok": False, "asset_serial": asset_serial, "error": error}
+
+
+@router.get("/api/onboard/post-collect/{asset_serial}")
+def onboard_post_collect_status(
+    asset_serial: str,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """納管後自動收集跑到哪了（2026-09-17 使用者：「我認為我納管後，所有的資料都要跟著變動」）。
+
+    納管完成 ≠ 資料進來了：規格／服務／軟體／帳號是背景收的，要等幾十秒。
+    以前畫面不會自己更新，使用者看到的還是「軟體 0」，會以為收集壞掉。
+    這支讓畫面知道「還在收 / 收完了 / 哪一樣沒收到」，收完就自己重載。
+    """
+    import collect_log
+    import post_onboard
+
+    import manage_state
+
+    # 同一台（machine_key）的任一筆登記都算：納管是用 IP 找序號，掛到的可能是同一台的另一筆
+    try:
+        mine = set(manage_state.expand_to_machines(conn, [asset_serial]) or [asset_serial])
+    except Exception:  # noqa: BLE001 - 查不到同一台就只看自己（不猜）
+        mine = {asset_serial}
+    mine.add(asset_serial)
+    running = any(post_onboard.running_for(s) for s in mine)
+    # 排隊中／正在收第幾樣（同一台任一筆在跑就算）
+    progress = next((p for p in (post_onboard.progress_for(s) for s in mine) if p), None)
+    # 直接按這台的序號查（不是從最近 200 筆裡找：一次重新納管幾百台時，這台那筆早就不在裡面）
+    last = collect_log.latest_for(conn, "post_onboard", sorted(mine))
+    # ⚠️ 2026-10-18：原本讀 last["extra"]——但 collect_log.recent() 回的是 last["detail"]
+    # （record 把 extra 併進 detail_json），所以 results **永遠是空的**：資產頁的六樣結果
+    # 從來沒顯示過，跑完也不會自己重載，使用者只看到「尚未收集」。
+    results = ((last or {}).get("detail") or {}).get("results") or []
+    # 這一樣已經跑多久（伺服器算，不靠瀏覽器時鐘）；超過心跳門檻畫面講「可能已中斷」（同 2-1）
+    if progress and progress.get("since"):
+        try:
+            from datetime import datetime as _dt
+
+            import collect_dispatch
+
+            el = (_dt.now() - _dt.strptime(progress["since"], "%Y-%m-%d %H:%M:%S")).total_seconds()
+            progress = {**progress, "elapsed_s": int(max(0, el)),
+                        # 單一樣最長可跑約 5 分鐘（組態檢核腳本逾時 300 秒），門檻至少 7 分鐘才不誤報
+                        "stale": el > max(collect_dispatch.heartbeat_stale_minutes(conn) * 60, 420)}
+        except Exception:  # noqa: BLE001 - 算不出經過時間就不顯示秒數，狀態照常
+            pass
+    # 決策 WINRM-ADMIN1：Windows 收集帳號不是本機管理員 → 一句總說明（不散成十幾個權限不足）
+    host_notice = None
+    try:
+        import winrm_collector
+
+        if any(post_onboard.win_admin(conn, s) == 0 for s in mine):
+            host_notice = winrm_collector.NOT_ADMIN_NOTICE
+    except Exception:  # noqa: BLE001 - 判不出來就不講（不猜）
+        host_notice = None
+    return {"running": running, "progress": progress, "last": last, "results": results,
+            "host_notice": host_notice,
+            "jobs": [{"job": j, "label": post_onboard.JOB_LABEL[j]} for j in post_onboard.JOBS]}
+
+
+@router.post("/api/onboard/post-collect/{asset_serial}")
+def onboard_post_collect_start(
+    asset_serial: str,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """資產頁「收集全部」（2026-10-18 使用者：所有收集都要一樣）：跟納管後同一套六樣
+    （規格／服務／軟體／帳號／OS 重建／組態檢核）、同一條路徑（post_onboard.start）、
+    同樣的略過規則（VMware 一律不收、Windows 沒有組態檢核／OS 重建）。
+
+    背景跑、立刻回；畫面用上面那支 GET 輪詢，收完自己重載。這台已經在收 → 不並行，
+    那一輪跑完會再補一輪（started=False）。"""
+    import post_onboard
+
+    if conn.execute("SELECT 1 FROM hardware WHERE asset_serial = ?", (asset_serial,)).fetchone() is None:
+        raise HTTPException(status_code=404, detail="資產不存在")
+    started = post_onboard.start(None, asset_serial, by=session["username"], source="manual")
+    return {"started": started, "running": True,
+            "jobs": [{"job": j, "label": post_onboard.JOB_LABEL[j]} for j in post_onboard.JOBS]}
+
+
+class PostCollectBatchBody(BaseModel):
+    asset_serials: list[str]
+
+
+@router.post("/api/onboard/post-collect-batch")
+def onboard_post_collect_batch(
+    body: PostCollectBatchBody,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """2-1「已納管主機」勾選多台 →「收集全部」（2026-10-20 使用者：「我要怎麼將已收納主機都重新收集一次」）。
+
+    同資產頁那顆：同六樣、同略過規則、同一種紀錄（kind=post_onboard，標題「手動收集全部」）。
+    差別是多台：排進背景隊伍（post_onboard.enqueue）**一條執行緒逐台跑**，跟單台納管共用同時上限，
+    不會一次對幾百台同時跑腳本。立刻回；畫面輪詢下面那支 GET 看 x/N。唯讀收集，不改目標機。
+    """
+    import post_onboard
+
+    want = [s for s in dict.fromkeys(body.asset_serials or []) if s]
+    if not want:
+        raise HTTPException(status_code=400, detail="沒有勾選任何有資產序號的主機")
+    if len(want) > 5000:
+        raise HTTPException(status_code=400, detail="一次最多 5000 台")
+    have: set[str] = set()
+    for i in range(0, len(want), 400):        # SQLite 舊版參數上限 999：分批查
+        chunk = want[i:i + 400]
+        have |= {r[0] for r in conn.execute(
+            f"SELECT asset_serial FROM hardware WHERE asset_serial IN ({','.join('?' * len(chunk))})", chunk)}
+    missing = [s for s in want if s not in have]
+    out = post_onboard.enqueue(None, [s for s in want if s in have],
+                               by=session["username"], source="manual")
+    return {**out, "missing": missing}
+
+
+@router.get("/api/onboard/post-collect-queue")
+def onboard_post_collect_queue(
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """多台「收集全部」／開始收集後自動收六樣 的隊伍進度：x/N、目前哪台、成功／失敗／補一輪。
+    2026-10-20 使用者：「哪 77 台？能取消嗎？」→ items 逐台（IP／主機名現查）、lost＝重啟被清掉的。"""
+    import post_onboard
+
+    st = post_onboard.queue_status()
+    st["jobs"] = [{"job": j, "label": post_onboard.JOB_LABEL[j]} for j in post_onboard.JOBS]
+    lost = post_onboard.lost_serials(conn)
+    serials = list(dict.fromkeys([i["asset_serial"] for i in st.get("items", [])] + lost))
+    info: dict = {}
+    for k in range(0, len(serials), 400):
+        chunk = serials[k:k + 400]
+        for r in conn.execute(
+                f"SELECT asset_serial, ip, hostname FROM hardware WHERE asset_serial IN ({','.join('?' * len(chunk))})",
+                chunk):
+            info[r["asset_serial"]] = {"ip": r["ip"], "hostname": r["hostname"]}
+    for n, it in enumerate(st.get("items", []), 1):
+        it.update(no=n, source_label=post_onboard.SOURCE_TITLE.get(it.get("source") or "onboard", ""),
+                  **info.get(it["asset_serial"], {"ip": None, "hostname": None}))
+    st["lost"] = [{"no": n, "asset_serial": sn, **info.get(sn, {"ip": None, "hostname": None})}
+                  for n, sn in enumerate(lost, 1)]
+    st["can_admin"] = _can_edit_nav(session, conn)
+    return st
+
+
+class PostCollectCancelBody(BaseModel):
+    asset_serials: list[str] | None = None     # None＝全部取消
+
+
+@router.post("/api/onboard/post-collect-queue/cancel")
+def onboard_post_collect_cancel(
+    body: PostCollectCancelBody,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """取消排隊（全部或勾選的幾台）。管理員限定；每台都記「已取消」，不靜默丟掉。"""
+    import post_onboard
+
+    if not _can_edit_nav(session, conn):
+        raise HTTPException(status_code=403, detail="只有管理員可以取消排隊")
+    return post_onboard.cancel(conn, body.asset_serials, by=session["username"] if session else None)
+
+
+@router.post("/api/onboard/post-collect-queue/requeue-lost")
+def onboard_post_collect_requeue_lost(
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """服務重啟被清掉的那幾台重新排入（同「收集全部」的隊伍）。"""
+    import post_onboard
+
+    lost = post_onboard.lost_serials(conn)
+    if not lost:
+        return {"added": 0, "already": 0, **post_onboard.queue_status()}
+    out = post_onboard.enqueue(None, lost, by=session["username"] if session else None, source="manual")
+    post_onboard.clear_lost(conn)
+    return out
+
+
+@router.get("/api/onboard/managed/export")
+def onboard_managed_export(
+    kw: str = "", os: str = "", tag: str = "",
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """2-1「已納管主機」匯出 Excel：照畫面目前的搜尋／OS／標籤篩選，匯出篩完的全部列（見 managed_export）。"""
+    import managed_export
+    from urllib.parse import quote
+
+    data = managed_export.workbook_bytes(conn, kw=kw, os=os, tag=tag)
+    fname = f"已納管主機_{_now_local()[:10]}.xlsx"
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}"})
+
+
+@router.get("/api/onboard/failures")
+def onboard_failures_endpoint(
+    include_resolved: bool = False,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """納管失敗清單：哪些機器試過但進不去、為什麼、要找誰（2026-09-17 使用者：
+    「這些帳號納管失敗，我以後要怎麼查那些納管失敗過，他的 root 密碼可能不是預設密碼」）。
+
+    只回**每台最後一次**的結果——一台上週失敗今天成功了就不該再出現在待處理裡。
+    歷史仍在納管紀錄（onboard_audit）裡查得到。見 onboard_failures。
+    """
+    import onboard_failures
+
+    elsewhere = onboard_failures.elsewhere_ips(conn)   # 2-1 結果只讀一次
+    return {"items": onboard_failures.current_failures(conn, include_resolved, elsewhere=elsewhere),
+            "summary": onboard_failures.summary(conn, elsewhere=elsewhere)}
+
+
+@router.get("/api/onboard/failures/export")
+def onboard_failures_export(
+    os_class: str = "",
+    reason: str = "",
+    q: str = "",
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """匯出納管失敗清單——拿去跟管理員要密碼的就是這張。"""
+    import onboard_failures
+    from urllib.parse import quote
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "納管失敗清單"
+    ws.append(onboard_failures.EXPORT_HEADERS)
+    # os_class＝逗號分隔的作業系統大類（畫面上選的）；空白＝全部
+    picked = [x for x in os_class.split(",") if x.strip()]
+    for r in onboard_failures.export_rows(conn, picked, reason.strip() or None, q.strip() or None):
+        ws.append(["" if v is None else v for v in r])
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fname = f"納管失敗清單_{_now_local()[:10]}.xlsx"
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}"})
+
+
+@router.get("/api/onboard/audit")
+def onboard_audit_endpoint(
+    session: sqlite3.Row = Depends(require_auth), conn: sqlite3.Connection = Depends(get_db)
+):
+    """納管稽核紀錄（不含任何憑證）。"""
+    return [dict(r) for r in conn.execute(
+        "SELECT * FROM onboard_audit ORDER BY id DESC LIMIT 100")]
+
+
+@router.get("/api/onboard/audit/latest-by-ip")
+def onboard_audit_latest_by_ip(
+    ips: str = "",
+    session: sqlite3.Row = Depends(require_auth), conn: sqlite3.Connection = Depends(get_db),
+):
+    """批量查這批 IP 各自**最後一次**納管稽核紀錄（2026-10-18，不含任何憑證）。
+
+    給 /adopt「收集結果」表用：那張表一次可能列幾百個 IP，各打一次
+    `/api/onboard/audit` 太貴。`ips` 是逗號分隔的位址清單；回 `{ip: 最後一筆}`，
+    **查不到的 IP 不在回傳裡**——前端要顯示「—」（這台還沒被系統納管過），
+    不可以補一個假的 0 或空字串進去讓人以為是「查過、沒有」。
+
+    2026-10-18 起改呼叫 `onboard_failures.last_attempts()`（全站唯一一份「最後一次納管嘗試」）：
+    撤銷不算納管嘗試；最後一次失敗的另帶 `fail`（時間＋短原因＋完整訊息），
+    畫面上的「上次失敗」標籤就讀這個，後來成功了 `fail` 就是 None、標籤自動消失。
+    """
+    import onboard_failures
+
+    return onboard_failures.last_attempts(conn, ips.split(","))
+
+
+class LatestByIpBody(BaseModel):
+    ips: list[str] = []
+
+
+@router.post("/api/onboard/audit/latest-by-ip")
+def onboard_audit_latest_by_ip_post(
+    body: LatestByIpBody,
+    session: sqlite3.Row = Depends(require_auth), conn: sqlite3.Connection = Depends(get_db),
+):
+    """同上，IP 放 body——一次幾百上千台時網址會太長（伺服器回 414），唯讀、不改任何資料。"""
+    import onboard_failures
+
+    return onboard_failures.last_attempts(conn, body.ips[:20000])
+
+
+@router.get("/api/auto-onboard")
+def auto_onboard_state(
+    session: sqlite3.Row = Depends(require_auth), conn: sqlite3.Connection = Depends(get_db)
+):
+    """B 排程自動納管的現況：總開關、授權網段、最近的自動納管稽核。
+
+    授權網段是這功能的安全閘門——排程只碰列在這裡且啟用的網段前綴。稽核只含帳號名/成敗，
+    永不含密碼。
+    """
+    import auto_onboard
+
+    return {
+        "enabled": auto_onboard.is_enabled(conn),
+        "segments": auto_onboard.list_segments(conn),
+        "recent": auto_onboard.recent_auto_audit(conn, 50),
+    }
+
+
+@router.patch("/api/auto-onboard/enabled")
+def auto_onboard_set_enabled(
+    body: AutoOnboardEnabledBody,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """總開關。關閉＝排程不會自動納管任何機器（預設關閉）。
+
+    這只擋「無人在場的排程」；就算開著，也只碰授權網段內的主機。
+    """
+    import auto_onboard
+
+    auto_onboard.set_enabled(conn, body.enabled)
+    return {"ok": True, "enabled": auto_onboard.is_enabled(conn)}
+
+
+@router.post("/api/auto-onboard/segments")
+def auto_onboard_save_segment(
+    body: SegmentBody,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """新增／更新一個授權網段（以前綴為唯一鍵）。加進來才代表「授權排程自動納管這段」。"""
+    import auto_onboard
+
+    try:
+        auto_onboard.save_segment(conn, body.prefix, body.enabled, body.note)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"ok": True, "segments": auto_onboard.list_segments(conn)}
+
+
+@router.patch("/api/auto-onboard/segments/{seg_id}/enabled")
+def auto_onboard_toggle_segment(
+    seg_id: int,
+    body: SegmentEnabledBody,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """啟用／停用一個授權網段。停用＝排程跳過但保留設定。"""
+    import auto_onboard
+
+    if not auto_onboard.set_segment_enabled(conn, seg_id, body.enabled):
+        raise HTTPException(404, "查無此授權網段")
+    return {"ok": True, "segments": auto_onboard.list_segments(conn)}
+
+
+@router.delete("/api/auto-onboard/segments/{seg_id}")
+def auto_onboard_delete_segment(
+    seg_id: int,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    import auto_onboard
+
+    if not auto_onboard.delete_segment(conn, seg_id):
+        raise HTTPException(404, "查無此授權網段")
+    return {"ok": True, "segments": auto_onboard.list_segments(conn)}
+
+
+@router.post("/api/auto-onboard/run")
+def auto_onboard_run_now(
+    session: sqlite3.Row = Depends(require_auth), conn: sqlite3.Connection = Depends(get_db)
+):
+    """手動「立即執行」一輪自動納管：試連 → 納管授權網段內未納管的 Linux → 收 facts。
+
+    操作者在場的手動觸發，不受總開關約束，但仍受授權網段約束（沒授權就沒候選）。
+    會花數秒到數十秒（每台一次試連／SSH），前端要顯示執行中三態。
+    """
+    import auto_onboard
+
+    collector_ip = onboard_engine.resolve_collector_ip(conn)
+    return auto_onboard.scheduled_cycle(collector_ip=collector_ip, conn=conn)
+
+
+@router.post("/api/onboard/batch-auto/preview")
+def batch_auto_preview(
+    body: BatchOnboardBody,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """先看這批會跑哪些、擋掉哪些（正式/備援）、哪些未登記要你確認——不動任何機器。
+
+    畫面在真的按下去之前先叫這支，讓人看清楚範圍，避免手滑把正式機放進去。
+    """
+    import batch_onboard_service
+    return batch_onboard_service.classify_targets(conn, body.ips)
+
+
+@router.post("/api/onboard/batch-auto")
+def batch_auto_start(
+    body: BatchOnboardBody,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """啟動一批自動納管（背景跑，馬上回 run_id；畫面輪詢 /status）。
+
+    ⚠️ 統一密碼會改正式機的 root 密碼、又收不回，所以勾了 unify_password 一定要
+    confirm=="YES" 才放行（同「反納管」的打字確認）。
+    ⚠️ body.passwords 只往 service 傳、用完即丟——不進 DB、不進 log、不進回應。
+    """
+    import batch_onboard_service
+
+    if body.unify_password and body.confirm != "YES":
+        raise HTTPException(400, "勾了『統一密碼成 A』就要在確認欄輸入 YES——這會改正式機密碼且收不回")
+    try:
+        out = batch_onboard_service.start(
+            conn, body.ips, body.username, body.passwords,
+            unify_password=body.unify_password, triggered_by=session["username"],
+            include_ips=body.include_ips)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return out
+
+
+@router.get("/api/onboard/batch-auto/status")
+def batch_auto_status(
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """最近一批的進度＋逐台結果。畫面輪詢這個。"""
+    import batch_onboard_service
+    return batch_onboard_service.status(conn)
+
+
+@router.get("/api/onboard/batch-auto/export")
+def batch_auto_export(
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """把最近一批的結果匯出 xlsx（留存／交資安）。**不含任何密碼**，只有『用第幾組』。"""
+    import batch_onboard_service
+
+    st = batch_onboard_service.status(conn)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "批次納管結果"
+    ws.append(["IP", "環境別", "登入", "用哪組密碼", "已納管", "統一成A", "失敗階段", "原因"])
+    pw_label = {0: "A", 1: "B"}
+    for r in st["results"]:
+        ws.append([
+            r["ip"], r["environment"] or "",
+            "成功" if r["login_ok"] else "失敗",
+            pw_label.get(r["password_index"], "都不對" if r["login_ok"] is not None else ""),
+            "是" if r["onboarded"] else "否",
+            "是" if r["password_unified"] else "",
+            r["fail_stage"] or "", r["fail_reason"] or "",
+        ])
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    from urllib.parse import quote
+    fname = f"批次納管結果_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}"},
+    )
+
+
+@router.get("/api/scripts")
+def scripts_list(
+    session: sqlite3.Row = Depends(require_auth),
+):
+    """可以單獨下載的檢核／維運腳本。
+
+    使用者要的動線是「網頁下載 → scp 到 AIX → ksh 跑」，為了一支腳本下載 3.3MB
+    的完整更新包不合理。清單是**掃 scripts/ 目錄**算出來的，不是寫死檔名——
+    檔名會變（fcbaixsh 正在改名成 fcb_aix.ksh），寫死那天就會壞在「按鈕還在、
+    點下去 404」這種最難聯想的地方。
+    """
+    import script_downloads
+
+    return {"items": script_downloads.list_scripts()}
+
+
+@router.get("/api/scripts/{name}/download")
+def scripts_download(
+    name: str,
+    session: sqlite3.Row = Depends(require_auth),
+):
+    """下載單一腳本。以附件送出、內容一律 LF。
+
+    · 只認 list_scripts() 列得出來的檔名，帶路徑的輸入在查表那一步就落空
+      （見 script_downloads.read_script 的說明），不是靠字串過濾去猜。
+    · LF：這些檔案要在 AIX/Linux 跑，CRLF 會讓 #!/usr/bin/ksh 帶著 \r 直接執行失敗。
+    · 走 require_auth，跟其他端點同一層存取控制——不因為「只是一支腳本」就放行。
+    """
+    import script_downloads
+
+    try:
+        fname, body = script_downloads.read_script(name)
+    except KeyError:
+        raise HTTPException(404, f"沒有這支可下載的腳本：{name}")
+    return Response(
+        content=body,
+        # text/plain 會被瀏覽器直接渲染在分頁裡；要的是存成檔案。
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"',
+                 "X-Content-Type-Options": "nosniff"},
+    )
+
+
+@router.post("/api/onboard-exempt")
+def add_onboard_exempt(
+    body: ExemptBody,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """標記為非納管設備（客製化系統／Oracle／廠商維護等）。原因必填。見 onboard_exempt。"""
+    import onboard_exempt
+
+    try:
+        return onboard_exempt.add(conn, body.serials, body.reason, body.kind,
+                                  session["username"] if session else None)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/api/onboard-exempt/remove")
+def remove_onboard_exempt(
+    body: ExemptRemoveBody,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """取消豁免：這台又要納管了。軟刪，紀錄留著。"""
+    import onboard_exempt
+
+    return {"removed": onboard_exempt.remove(conn, body.serials,
+                                             session["username"] if session else None)}
+
+
+@router.get("/api/onboard-exempt")
+def list_onboard_exempt(
+    include_removed: bool = False,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """目前被豁免的清單（誰標的、為什麼）。"""
+    import onboard_exempt
+
+    return {"items": onboard_exempt.list_all(conn, include_removed), "kinds": list(onboard_exempt.KINDS)}
+
+
+@router.get("/api/golive")
+def golive_list(
+    status: str = Query("open"),
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """上線檢查表清單（預設看還沒過的——那才是待辦）。"""
+    rows = conn.execute(
+        "SELECT g.*, h.hostname, h.ip, h.os, h.asset_status, h.asset_name "
+        "FROM golive_check g LEFT JOIN hardware h ON h.asset_serial = g.asset_serial "
+        "WHERE g.status = ? ORDER BY g.started_at DESC",
+        (status,),
+    ).fetchall()
+    out = []
+    for r in rows:
+        detail = golive.get_check_detail(conn, r["asset_serial"])
+        out.append({**dict(r), "total": detail["total"], "done": detail["done"]})
+    return {"checks": out}
+
+
+@router.get("/api/golive/{asset_serial}")
+def golive_detail(
+    asset_serial: str,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    if conn.execute(
+        "SELECT 1 FROM hardware WHERE asset_serial = ?", (asset_serial,)
+    ).fetchone() is None:
+        raise HTTPException(404, f"找不到資產 {asset_serial}")
+    golive.refresh_auto_results(conn, asset_serial)
+    return golive.get_check_detail(conn, asset_serial)
+
+
+@router.post("/api/golive/{asset_serial}/item")
+def golive_set_item(
+    asset_serial: str,
+    body: GoliveItemBody,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    try:
+        golive.set_item_verdict(conn, asset_serial, body.item_key, body.verdict,
+                                session["username"])
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return golive.get_check_detail(conn, asset_serial)
+
+
+@router.post("/api/golive/{asset_serial}/pass")
+def golive_pass(
+    asset_serial: str,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """全部項目處理完才准通過；通過同時把資產轉「使用中」並把 auto 項存成基線。"""
+    try:
+        return golive.pass_check(conn, asset_serial, session["username"])
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+# ===== 機房搬遷盤點表匯出（2026-09-13）=====
+@router.get("/api/relocation/locations")
+def relocation_locations_endpoint(
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    import relocation_export
+    return {"items": relocation_export.locations(conn)}
+
+
+@router.get("/api/relocation/packages")
+def relocation_packages_endpoint(
+    room: str = "",
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """搬遷包 v1（唯讀）：所選機房的現役機器，依「同系統＋連線證據」分成必須同批搬的包。"""
+    import relocation_packages
+    if not room.strip():
+        raise HTTPException(400, "請指定機房（room）")
+    try:
+        return relocation_packages.list_packages(conn, room)
+    except relocation_packages.UnknownRoom:
+        raise HTTPException(404, f"查無機房「{room.strip()}」：請從機房清單選一個現有的機房")
+
+
+@router.get("/api/relocation/packages/{package_id}")
+def relocation_package_detail_endpoint(
+    package_id: str,
+    room: str = "",
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """一個搬遷包的成員清單與合併證據。包代號隨機房而定，所以要帶 room。"""
+    import relocation_packages
+    if not room.strip():
+        raise HTTPException(400, "請指定機房（room）")
+    try:
+        d = relocation_packages.package_detail(conn, room, package_id)
+    except relocation_packages.UnknownRoom:
+        raise HTTPException(404, f"查無機房「{room.strip()}」：請從機房清單選一個現有的機房")
+    if d is None:
+        raise HTTPException(404, "查無此搬遷包（機房或資料可能已變動，請重新整理包總表）")
+    return d
+
+
+@router.post("/api/relocation/import")
+def relocation_import_endpoint(
+    file: UploadFile = File(...),
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """匯入現場填回的 Master → 逐欄跟系統對帳 → 回一份校對版（綠同/紅異/藍補）＋差異列進CIA待異動。
+    只讀不寫回資料庫。"""
+    import relocation_import
+    from urllib.parse import quote
+
+    try:
+        raw = relocation_import.read_upload(file.file)
+        buf, summary = relocation_import.reconcile(conn, raw)
+    except relocation_import.RelocationTooLarge as exc:
+        raise HTTPException(413, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:  # noqa: BLE001 — openpyxl 對壞檔的例外型態不一
+        raise HTTPException(400, f"讀不了這個檔：{exc}")
+    fname = f"機房搬遷盤點表_校對版_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}",
+                 "X-Same": str(summary["same"]), "X-Diff": str(summary["diff"]),
+                 "X-Filled": str(summary["filled"]), "X-Unknown": str(summary["unknown_serial"]),
+                 "X-Three-Baseline": relocation_import.baseline_code(summary["three_way"]["baseline_status"]),
+                 **{f"X-Three-{k}": str(v) for k, v in summary["three_way"]["counts"].items()}},
+    )
+
+
+@router.get("/api/relocation/export")
+def relocation_export_endpoint(
+    location: str | None = None,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """把現有資料預填成搬遷 Master 的 4 張表（Server Master/LAN/FC SAN/Power）並下載。"""
+    import relocation_export
+    from urllib.parse import quote
+
+    buf, n = relocation_export.build(conn, location)
+    tag = (location or "全部").replace("/", "_")
+    fname = f"機房搬遷盤點表_{tag}_{datetime.now().strftime('%Y%m%d')}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}",
+                 "X-Row-Count": str(n)},
+    )
+
+
+@router.get("/api/adopt/move-choices")
+def adopt_move_choices(session: sqlite3.Row = Depends(require_auth)):
+    """2-1 的分類頁簽（`tabs`，頁簽列與所有「改分類」選單共用同一份）＋可搬的那幾個（`items`，舊介面）。"""
+    import collect_dispatch
+    return {"items": collect_dispatch.move_choices(), "tabs": collect_dispatch.category_tabs()}
+
+
+@router.post("/api/adopt/move-tab")
+def adopt_move_tab(
+    body: AdoptMoveBody,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """把一台或多台搬到別的頁簽（批次用同一支，逐台回報成敗）。
+
+    認不出是哪一台的（沒登記、既沒有主機名＋IP 也沒有序號）會逐筆回在 `failed`，
+    不是整批失敗——一批 20 台裡有 2 台認不出來，不該讓另外 18 台也白做。
+    """
+    import collect_dispatch
+    import os_override
+
+    if not body.targets:
+        raise HTTPException(400, "沒有要搬的目標")
+    os_type = None
+    if body.tab is not None:
+        # 大型主機分 AIX／AS400（IBM i）：body.os_type 指定子類別，沒給就是第一個（AIX）
+        os_type = collect_dispatch.os_type_for_tab_choice(body.tab, body.os_type)
+        if not os_type:
+            raise HTTPException(400, f"不能搬到「{body.tab}」這個頁簽"
+                                     f"（可搬：{'、'.join(collect_dispatch.MOVABLE_TABS)}）")
+
+    moved, failed = [], []
+    for t in body.targets:
+        try:
+            if os_type is None:
+                os_override.clear(conn, t.hostname, t.ip, t.asset_serial, session["username"])
+            else:
+                # auto_os_type：指定當下系統自動判的類別（留證據，畫面要寫得出「從哪類改到哪類」）
+                auto = None
+                row = conn.execute(
+                    "SELECT asset_serial, os, device_model, hostname, asset_name FROM hardware "
+                    "WHERE ip = ? LIMIT 1", (t.ip,)).fetchone()
+                if row is not None:
+                    import collected_os
+                    import pipeline
+                    auto = collected_os.apply_os_type(
+                        pipeline._os_type(row["os"], None, row["device_model"],
+                                          (row["hostname"], row["asset_name"])),
+                        collected_os.platform_map(conn).get(row["asset_serial"]))
+                os_override.set_override(conn, t.hostname, t.ip, t.asset_serial,
+                                         os_type, auto, body.reason, session["username"])
+            moved.append(t.ip)
+        except ValueError as exc:
+            failed.append({"ip": t.ip, "error": str(exc)})
+    return {"ok": not failed, "moved": moved, "failed": failed,
+            "tab": body.tab, "os_type": os_type}
+
+
+# ───────────── Windows 納管：勾選才收（2026-10-22，見 win_onboard.py）─────────────
+# 2-1 WinRM 頁簽：預設不登入 Windows，人勾選按「納管」才登入＋驗本機管理員＋收一輪全部。
+# 納管不改目標機任何東西（WINRM-ADMIN1）。逐台一個請求：畫面逐列顯示執行中／成功／失敗。
+
+class WinOnboardBody(BaseModel):
+    ip: str
+    credential: str | None = None     # 從「已設定的 WinRM 憑證」裡挑的名稱；不給＝沿用（依網段，或上次指定的）；"__auto__"＝改回依網段自動
+
+
+class WinRevokeBody(BaseModel):
+    ip: str
+    confirm: str = ""
+
+
+def _win_ip(raw: str) -> str:
+    ip = (raw or "").strip()
+    try:
+        ipaddress.ip_address(ip)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"不是有效的 IP：{raw}")
+    return ip
+
+
+@router.get("/api/onboard/windows/state")
+def win_onboard_state(
+    ips: str = "",
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """一批 IP（逗號分隔）的 Windows 納管狀態；沒給就列全部納管中的。沒有任何憑證欄位。"""
+    import win_onboard
+
+    want = [x for x in (ips or "").split(",") if x.strip()]
+    if not want:
+        want = [r[0] for r in conn.execute(
+            "SELECT ip FROM win_onboard_state WHERE opted_in = 1 AND ip IS NOT NULL")]
+    if len(want) > 5000:
+        raise HTTPException(status_code=400, detail="一次最多 5000 個 IP")
+    return {"items": win_onboard.state_map(conn, want)}
+
+
+@router.get("/api/onboard/windows/permissions")
+def win_onboard_permissions(
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """權限面板：收集帳號（只有名字）、權限怎麼來、讀哪些、絕不做什麼、各台是不是本機管理員。"""
+    import win_onboard
+
+    return win_onboard.permissions(conn)
+
+
+@router.post("/api/onboard/windows")
+def win_onboard_one(
+    body: WinOnboardBody,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """納管／重新納管一台 Windows（已納管的再按＝重新納管）。登入失敗回 ok=False 與原因，不丟 500。"""
+    import win_onboard
+
+    import credential_store
+
+    cred = (body.credential or "").strip() or None
+    if cred and cred != credential_store.AUTO and not _can_edit_nav(session, conn):
+        raise HTTPException(status_code=403, detail="只有管理員可以指定用哪一組憑證納管（一般登入者請沿用自動）")
+    if cred and cred != credential_store.AUTO and not credential_store.valid_choice(conn, cred, "winrm"):
+        raise HTTPException(status_code=400, detail=f"憑證「{cred}」不存在，或不是 WinRM 憑證（Windows 納管只能挑 WinRM 憑證）")
+    return win_onboard.onboard_one(conn, _win_ip(body.ip), by=session["username"], credential=cred)
+
+
+@router.post("/api/onboard/windows/revoke")
+def win_onboard_revoke(
+    body: WinRevokeBody,
+    session: sqlite3.Row = Depends(require_auth),
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """取消納管：之後不再登入這台；目標機不動、已收資料保留。要帶 confirm='YES'（防手滑）。"""
+    import win_onboard
+
+    if body.confirm != "YES":
+        raise HTTPException(status_code=400, detail="取消納管需要確認（confirm=YES）")
+    out = win_onboard.revoke(conn, _win_ip(body.ip), by=session["username"])
+    if not out["ok"]:
+        raise HTTPException(status_code=400, detail=out["message"])
+    return out
+
+
+__all__ = [
+    'win_onboard_state',
+    'win_onboard_permissions',
+    'win_onboard_one',
+    'win_onboard_revoke',
+    'onboard_endpoint',
+    'revoke_endpoint',
+    'agent_stage',
+    'agent_facts',
+    'onboard_batch_probe',
+    'onboard_precheck',
+    'onboard_hint',
+    'list_credentials',
+    'save_credential',
+    'edit_credential',
+    'test_credential',
+    'delete_credential',
+    'onboard_script',
+    'onboard_progress',
+    'onboard_verify',
+    'onboard_post_collect_status',
+    'onboard_failures_endpoint',
+    'onboard_failures_export',
+    'onboard_audit_endpoint',
+    'auto_onboard_state',
+    'auto_onboard_set_enabled',
+    'auto_onboard_save_segment',
+    'auto_onboard_toggle_segment',
+    'auto_onboard_delete_segment',
+    'auto_onboard_run_now',
+    'batch_auto_preview',
+    'batch_auto_start',
+    'batch_auto_status',
+    'batch_auto_export',
+    'scripts_list',
+    'scripts_download',
+    'add_onboard_exempt',
+    'remove_onboard_exempt',
+    'list_onboard_exempt',
+    'golive_list',
+    'golive_detail',
+    'golive_set_item',
+    'golive_pass',
+    'relocation_locations_endpoint',
+    'relocation_import_endpoint',
+    'relocation_export_endpoint',
+    'adopt_move_choices',
+    'adopt_move_tab',
+]

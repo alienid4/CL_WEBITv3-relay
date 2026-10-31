@@ -1,0 +1,323 @@
+{
+  "_comment": "異動需求單／上線檢查表裡的勾選欄位（2026-08-15，使用者指出「□WIN ☑LINUX，有☑的代表選 LINUX」後建立）。三個刻意的設計：①只認這裡列出的選項詞，不做通用的「找勾記號」——舊 .doc 把勾記號解碼成半形左括號 '('，而 '(' 在文件裡本來就到處都是（(西元)、(主機組填寫)），不限定詞彙就會把括號當成勾選。②只在 anchors 指定的標籤附近 window 個字內找——整份文件找的話「DMZ」「新增」「測試」到處都是，會讓根本沒有該欄位的表也判出一個值。③抽出來只當「單據上寫什麼」，不直接覆蓋資產欄位；asset_field 是它對得上的 hardware 欄位，要人確認過才套用。",
+  "fields": [
+    {
+      "key": "host_type",
+      "label": "主機型態",
+      "anchors": [
+        "主機型態"
+      ],
+      "window": 30,
+      "options": [
+        "實體機",
+        "虛擬機"
+      ],
+      "single": true,
+      "asset_field": "is_vm",
+      "value_map": {
+        "實體機": "0",
+        "虛擬機": "1"
+      }
+    },
+    {
+      "key": "apply_kind",
+      "label": "申請項目",
+      "anchors": [
+        "申請項目"
+      ],
+      "window": 40,
+      "options": [
+        "新增",
+        "異動",
+        "刪除",
+        "下線",
+        "不適用"
+      ],
+      "single": true
+    },
+    {
+      "key": "change_speed",
+      "label": "變更速別",
+      "anchors": [
+        "變更速別"
+      ],
+      "window": 40,
+      "options": [
+        "緊急",
+        "一般",
+        "標準"
+      ],
+      "single": true
+    },
+    {
+      "key": "datacenter",
+      "label": "機房地點",
+      "anchors": [
+        "主機環境地點",
+        "環境地點",
+        "機房地點"
+      ],
+      "window": 70,
+      "options": [
+        "板橋機房",
+        "內湖機房",
+        "敦南機房",
+        "板橋COLO"
+      ],
+      "single": true,
+      "asset_field": "physical_location"
+    },
+    {
+      "key": "environment",
+      "label": "環境別",
+      "anchors": [
+        "板橋COLO",
+        "其他_________"
+      ],
+      "window": 40,
+      "options": [
+        "正式",
+        "測試",
+        "備援"
+      ],
+      "single": true,
+      "asset_field": "environment"
+    },
+    {
+      "key": "service_type",
+      "label": "服務類型",
+      "anchors": [
+        "服務類型"
+      ],
+      "window": 60,
+      "options": [
+        "對外服務",
+        "內部服務",
+        "系統管理"
+      ],
+      "single": true
+    },
+    {
+      "key": "host_role",
+      "label": "主機用途",
+      "anchors": [
+        "主機用途"
+      ],
+      "window": 40,
+      "options": [
+        "WEB",
+        "AP",
+        "APP",
+        "DB"
+      ],
+      "single": false
+    },
+    {
+      "key": "web_type",
+      "label": "WEB 類型",
+      "anchors": [
+        "WEB類型"
+      ],
+      "window": 40,
+      "options": [
+        "IIS",
+        "Apache",
+        "Tomcat",
+        "Nginx"
+      ],
+      "single": false
+    },
+    {
+      "key": "db_type",
+      "label": "DB 類型",
+      "anchors": [
+        "DB類型"
+      ],
+      "window": 50,
+      "options": [
+        "MSSQL",
+        "ORACLE",
+        "MYSQL",
+        "PostgreSQL"
+      ],
+      "single": false
+    },
+    {
+      "key": "param_level",
+      "label": "參數設定",
+      "anchors": [
+        "參數設定"
+      ],
+      "window": 50,
+      "options": [
+        "System Level",
+        "Program Level",
+        "Process Level"
+      ],
+      "single": false
+    }
+  ],
+  "_value_comment": "自由填寫的規格欄（2026-08-15 使用者要求：『每個都要抽，我才會知道他當初 CPU 跟記憶體申請是多少』）。這些欄位長成「選項＋☑其他____填空」，例如 CPU Core：☐4 ☐8 ☑其他__16__。抽法：在 anchor 附近找被勾起來的那個，是「其他」就取後面填空的內容。**這類值一律進人工審核佇列**——先前不抽就是因為抓歪不會報錯，加了審核關卡才敢抽：人看過就會報錯。實測有一份的 CPU Core 抽到「512 GB」（填表的人把記憶體值寫進 CPU 那格，或表格排版跑掉），正是要靠人看才發現的那種。",
+  "value_fields": [
+    {
+      "key": "cpu_core",
+      "label": "CPU Core",
+      "anchors": [
+        "CPUCore"
+      ],
+      "window": 40
+    },
+    {
+      "key": "memory_gb",
+      "label": "記憶體(GB)",
+      "anchors": [
+        "記憶體（GB）",
+        "記憶體(GB)"
+      ],
+      "window": 40
+    },
+    {
+      "key": "disk_c",
+      "label": "C 硬碟容量",
+      "anchors": [
+        "C:硬碟容量",
+        "C硬碟容量"
+      ],
+      "window": 40
+    },
+    {
+      "key": "disk_d",
+      "label": "D 硬碟容量",
+      "anchors": [
+        "D:硬碟容量",
+        "D硬碟容量"
+      ],
+      "window": 50
+    },
+    {
+      "key": "disk_linux",
+      "label": "Linux 磁碟",
+      "anchors": [
+        "Linux☐預設",
+        "Linux(預設",
+        "Linux預設"
+      ],
+      "window": 40
+    },
+    {
+      "key": "os_version",
+      "label": "作業系統版本",
+      "anchors": [
+        "其他版本：",
+        "其他版本",
+        "其他版本:"
+      ],
+      "window": 40
+    }
+  ],
+  "_section_comment": "需求單第二頁以後的 13 個大區塊（2026-08-15 使用者要求把整份單都抽）。每個區塊開頭都是「☐新增☐異動☐刪除☐不適用」，抽的是**這個區塊適不適用**——這比抽區塊內每一格更有價值：一眼看得出這台機器有沒有 DNS／F5／備份／WAF 需求，而且勾選判定的可靠度遠高於自由填寫欄。區塊內的細節欄位留在全文檢索裡，需要時搜得到。",
+  "sections": [
+    {
+      "key": "dns",
+      "label": "DNS 名稱解析",
+      "anchors": [
+        "二、DNS名稱解析"
+      ],
+      "window": 40
+    },
+    {
+      "key": "f5",
+      "label": "F5 設定(LTM)",
+      "anchors": [
+        "三、F5設定"
+      ],
+      "window": 50
+    },
+    {
+      "key": "backup",
+      "label": "備份需求",
+      "anchors": [
+        "四、備份需求"
+      ],
+      "window": 40
+    },
+    {
+      "key": "ext_service",
+      "label": "主機對外服務 IP",
+      "anchors": [
+        "五、主機對外服務"
+      ],
+      "window": 50
+    },
+    {
+      "key": "exchange_ip",
+      "label": "交易所連線申請 IP",
+      "anchors": [
+        "六、主機交易所"
+      ],
+      "window": 50
+    },
+    {
+      "key": "net_device",
+      "label": "網路設備資源申請",
+      "anchors": [
+        "七、網路設備資源"
+      ],
+      "window": 40
+    },
+    {
+      "key": "ddos",
+      "label": "對外 DDoS 保護群組",
+      "anchors": [
+        "八、對外DDoS"
+      ],
+      "window": 50
+    },
+    {
+      "key": "waf",
+      "label": "對外 WAF 網站防護",
+      "anchors": [
+        "九、對外WAF"
+      ],
+      "window": 50
+    },
+    {
+      "key": "bot",
+      "label": "機器人網站防禦",
+      "anchors": [
+        "十、機器人網站"
+      ],
+      "window": 50
+    },
+    {
+      "key": "database",
+      "label": "資料庫申請",
+      "anchors": [
+        "十一、資料庫"
+      ],
+      "window": 50
+    },
+    {
+      "key": "db_param",
+      "label": "資料庫參數設定",
+      "anchors": [
+        "十二、資料庫參數"
+      ],
+      "window": 50
+    },
+    {
+      "key": "decommission",
+      "label": "主機下線作業確認",
+      "anchors": [
+        "十四、主機下線"
+      ],
+      "window": 60
+    }
+  ],
+  "section_options": [
+    "新增",
+    "異動",
+    "刪除",
+    "不適用"
+  ]
+}
