@@ -1,0 +1,27 @@
+Matching Defaults entries for webit3scan on host01:
+    !visiblepw, always_set_home, match_group_by_gid, always_query_group_plugin, env_reset, env_keep="COLORS DISPLAY HOSTNAME HISTSIZE KDEDIR LS_COLORS", env_keep+="MAIL PS1 PS2 QTDIR USERNAME LANG LC_ADDRESS LC_CTYPE", env_keep+="LC_COLLATE LC_IDENTIFICATION LC_MEASUREMENT LC_MESSAGES", env_keep+="LC_MONETARY LC_NAME LC_NUMERIC LC_PAPER LC_TELEPHONE", env_keep+="LC_TIME LC_ALL LANGUAGE LINGUAS _XKB_CHARSET XAUTHORITY", secure_path=/sbin\:/bin\:/usr/sbin\:/usr/bin
+
+User webit3scan may run the following commands on host01:
+    (root) NOPASSWD: /usr/local/libexec/webit3/account-facts \"\"
+    (root) NOPASSWD: /usr/sbin/smartctl -a /dev/*, /sbin/smartctl -a /dev/*, /usr/sbin/smartctl --scan, /usr/sbin/smartctl --scan-open, /sbin/smartctl --scan, /sbin/smartctl --scan-open
+    (root) NOPASSWD: /usr/sbin/multipath -ll, /sbin/multipath -ll
+    (root) NOPASSWD: /usr/sbin/storcli64 /call show, /opt/MegaRAID/storcli/storcli64 /call show, /usr/sbin/perccli64 /call show, /opt/MegaRAID/perccli/perccli64 /call show
+    (root) NOPASSWD: /usr/sbin/ssacli ctrl all show config, /opt/smartstorageadmin/ssacli/bin/ssacli ctrl all show config
+    (root) NOPASSWD: /usr/bin/tail -n 200 /var/log/secure
+    (root) NOPASSWD: /usr/bin/tail -n 200 /var/log/auth.log
+    (root) NOPASSWD: /usr/bin/dmesg --level\=err\,crit
+    (root) NOPASSWD: /usr/sbin/ss -tlnp, /usr/bin/ss -tlnp
+    (root) NOPASSWD: /usr/local/libexec/webit3/rebuild-facts dmi
+    (root) NOPASSWD: /usr/local/libexec/webit3/rebuild-facts lvm-backup
+    (root) NOPASSWD: /usr/local/libexec/webit3/rebuild-facts cron-spool
+    (root) NOPASSWD: /usr/local/libexec/webit3/rebuild-facts nm-connections
+    (root) NOPASSWD: /usr/local/libexec/webit3/rebuild-facts netplan
+    (root) NOPASSWD: /usr/local/libexec/webit3/rebuild-facts authkeys-fp
+    (root) NOPASSWD: /usr/local/libexec/webit3/rebuild-facts config-audit
+    (root) NOPASSWD: /usr/sbin/dmidecode -t 0, /sbin/dmidecode -t 0, /usr/sbin/dmidecode -t 17, /sbin/dmidecode -t 17, /usr/sbin/dmidecode -t 39, /sbin/dmidecode -t 39
+    (root) NOPASSWD: /usr/sbin/vgs --noheadings --units g -o vg_name\,vg_size\,vg_free, /sbin/vgs --noheadings --units g -o vg_name\,vg_size\,vg_free
+    (root) NOPASSWD: /usr/sbin/vgs --noheadings --units g -o vg_name\,pv_count\,lv_count\,vg_attr\,vg_size\,vg_free\,vg_extent_size\,vg_uuid, /sbin/vgs --noheadings --units g -o vg_name\,pv_count\,lv_count\,vg_attr\,vg_size\,vg_free\,vg_extent_size\,vg_uuid
+    (root) NOPASSWD: /usr/sbin/lvs -a --noheadings --units g -o lv_name\,vg_name\,lv_attr\,lv_size\,seg_count\,lv_layout\,stripes\,devices\,lv_uuid, /sbin/lvs -a --noheadings --units g -o lv_name\,vg_name\,lv_attr\,lv_size\,seg_count\,lv_layout\,stripes\,devices\,lv_uuid
+    (root) NOPASSWD: /usr/sbin/pvs --noheadings --units g -o pv_name\,vg_name\,pv_fmt\,pv_attr\,pv_size\,pv_free\,pv_uuid, /sbin/pvs --noheadings --units g -o pv_name\,vg_name\,pv_fmt\,pv_attr\,pv_size\,pv_free\,pv_uuid
+    (root) NOPASSWD: /usr/sbin/blkid \"\", /sbin/blkid \"\"
+    (root) NOPASSWD: /usr/sbin/iptables-save \"\", /sbin/iptables-save \"\"
