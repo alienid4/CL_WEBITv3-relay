@@ -1,0 +1,16 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WEBIt3 維運紀錄操作補頁｜假資料示範</title>
+<style>body{margin:0;background:#edf2f6;color:#183044;font:16px/1.7 "Microsoft JhengHei",sans-serif}main{max-width:1100px;margin:24px auto;background:#fff;padding:32px;box-sizing:border-box}h1{font-size:28px;margin:0 0 12px}h2{font-size:22px;margin:30px 0 8px}.tag{display:inline-block;background:#fff0bf;border:1px solid #b88b16;padding:3px 12px;font-weight:bold}.meta,figcaption{font-size:14px;color:#4a5d6b}figure{margin:20px 0}img{display:block;width:100%;height:auto;border:1px solid #c6d3dc;box-sizing:border-box}li{margin:8px 0}.note{padding:14px 18px;border-left:4px solid #148477;background:#eff8f6}table{width:100%;border-collapse:collapse;margin:14px 0}th,td{text-align:left;border:1px solid #c6d3dc;padding:10px;vertical-align:top}th{background:#f0f5f8}@media(max-width:650px){main{padding:18px;margin:0}h1{font-size:24px}}@media print{@page{size:A4;margin:14mm}body{background:white}main{margin:0;padding:0}section+section{break-before:page}figure{break-inside:avoid}}</style></head><body><main>
+<h1>維運紀錄：新增、更正、作廢與稽核</h1><span class="tag">本機假資料示範</span>
+<p class="meta">畫面來源：WEBIt3 2.041.66隔離環境，2026-11-02。全部主機、帳號、事件與文字均為合成資料。供操作說明收錄；公司正式登入授權與實際資料操作另行核實。</p>
+<section><h2>1. 記錄處理經過，保留修訂依據</h2><ol>
+<li>進入主機履歷的「事件與維運紀錄」，核對事件、時間與來源，再展開該事件。</li>
+<li>依實際處理情況新增「處理措施」、「根因」或「改善結果」。示例的改善結果為「仍待觀察」，不能當作已恢復。</li>
+<li>原記錄有誤時按「更正」，填寫新內容與更正原因。新記錄取代有效內容，原文仍保留為已更正紀錄。</li>
+<li>尚未確認的改善結果可按「作廢」並填原因。原文保留為已作廢，有效改善結果回到未填；不是直接刪除歷史。</li>
+<li>管理員開啟「稽核」查看改前、改後、操作帳號與時間，核對修訂是否符合處理事實。</li></ol>
+<figure><img src="admin-audit.png" alt="假資料管理員畫面：更正與作廢紀錄、改前改後稽核"><figcaption>圖1：假資料管理員的修訂與稽核畫面。示例有4筆記錄、6筆稽核；原合成告警仍無解除紀錄。</figcaption></figure>
+<p class="note">處理紀錄與監控告警分開保存。新增措施、填根因或作廢改善結果，均不代表告警已解除；本示例的原告警沒有被改寫。</p></section>
+<section><h2>2. 唯讀角色查看有效紀錄</h2><p>以唯讀角色開啟同一事件，可查看目前有效的處理措施與根因；本次畫面沒有新增、更正、作廢或稽核按鈕。</p>
+<table><thead><tr><th>角色與畫面</th><th>本示例已驗範圍</th></tr></thead><tbody><tr><td>管理員</td><td>新增、更正、作廢、查看修訂歷史及改前改後稽核。</td></tr><tr><td>唯讀角色</td><td>查看2筆有效紀錄，沒有寫入與稽核按鈕。未宣稱可看全部已更正／已作廢歷史。</td></tr></tbody></table>
+<figure><img src="viewer-active.png" alt="假資料唯讀畫面：只能看、兩筆有效紀錄、沒有寫入按鈕"><figcaption>圖2：假資料唯讀角色畫面。改善結果已作廢，因此不當作有效處理結論。</figcaption></figure>
+<p class="meta">驗收依據：整頁驗收_ACT05_204166_2026-11-02.json及其DOM、庫核證據。本補頁不代表全部ACT驗收、公司通知送達或產品手冊已整合；列印分頁尚未驗收。</p></section></main></body></html>

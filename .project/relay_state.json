@@ -1,0 +1,5 @@
+{
+  "_comment": "relay_local.py 每次成功推送後自己寫的。閘門拿它跟 origin/main 比，看公司端落後幾個 commit。這是本機記錄，不是跟 relay 對帳的結果。",
+  "main_sha": "4a8569e6d3828f765e10e7ebe6903f4eb6f98569",
+  "pushed_at": "2026-11-05T04:38:29+08:00"
+}
