@@ -1,0 +1,82 @@
+# 參考資料/資料集不進版控（FOLDER_STRUCTURE_RULES：DOC/DATA 留在原地，不跟 AI/APP 一起搬遷）
+DOC/*
+DATA/
+
+# 例外：DOC/ 底下自己寫的交付文件（架構圖、業務流程、接口清單、維運手冊）要進版控。
+#
+# 為什麼要特別開這個例外：`DOC/` 整個被忽略的原意是「外部參考素材（規範、截圖、
+# 廠商文件）留在原地、不隨程式碼搬遷」。但 2026-10-06 之後 DOC/ 同時放了**我們自己寫的
+# 對外交付文件**，那些是 Markdown ＋ Mermaid、需要版控（要能 diff、要能回溯改了什麼）。
+#
+# 不開這條例外的後果：下一個人新增一份文件，`git status` **不會提示**，他會以為存檔就算
+# 完成，結果那份文件永遠只存在他那台機器上——而且是靜默失效，不會有任何錯誤訊息。
+# （第一批四份文件是用 `git add -f` 硬塞進去的，那只救得了當下，救不了下一個人。）
+#
+# 只放行 .md：DOC/ 底下的圖片、PDF、Excel 等素材與子目錄仍然不進版控，維持原意。
+#
+# 註：上面寫 `DOC/*` 而不是 `DOC/`。差別是會踩到的坑——寫 `DOC/` 等於忽略整個目錄，
+# git 根本不會進去看裡面有什麼，下面這條 `!DOC/*.md` 永遠不會生效（實測過）。
+!DOC/*.md
+
+# 本機專屬設定
+.claude/settings.local.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# 資料庫檔（真實/開發用皆不進版控，D34 data/ 目錄本來就跟 app/ 分開）
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# Node / Nuxt（之後前端開發用）
+node_modules/
+.nuxt/
+.output/
+dist/
+
+# 環境變數與敏感檔（SECURITY_RULES.md）
+.env
+.env.*
+*.pem
+*.key
+
+# 舊版存檔資料夾（僅供對照，不需要版控歷史）
+_ARCHIVE_*/
+
+# 每次部署 stamp 的建置資訊（git commit+時間），不進版控
+APP/asset-module/backend/build_info.json
+
+# 真實資料一律不進版控（使用者鐵律：只留在 221 與本機，別上 git）。
+# 2026-08-20 實際踩到：docs/asset_dump.7z（1.88MB 資產庫傾印）被 `git add -A`
+# 掃進去並 push 上 GitHub。雖然是私有 repo、也沒進公開 relay（relay 只收
+# APP/ tests/ .project/），但仍違反規則，最後用改寫歷史才清掉。
+# 靠人記得不要 add 是不可靠的，這裡直接擋掉。
+*.7z
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+asset_dump*
+*_dump.*
+
+# 2026-08-26：管理員給的盤點表（docs/系統盤點(全環境)Data.xlsx，2288 台真實主機名
+# 與業務系統分類）落在 docs/ 底下、原本沒被上面任何規則擋到，靠「記得不要 add」
+# 是不可靠的（8/20 已經證明過一次）。docs/ 是放外部素材的地方，Excel 幾乎必然含
+# 真實資料，整類擋掉；真要進版控的說明文件用 .md。
+docs/*.xlsx
+docs/*.xls
+docs/*.csv
+
+# 2026-08-28：使用者明確表示「只想自己知道」的說明頁，不進版控。
+# 靠「記得不要 add」不可靠（上面那條 docs/*.xlsx 就是這樣來的），直接擋掉。
+AI/交付鏈架構.html
+
+# 打包產出物：是成品不是原始碼，而且每包 2.5MB（2026-09-23 誤入版控一次）
+.project/out/

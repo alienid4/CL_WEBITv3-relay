@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>WEBIt3 操作畫面補頁｜本機假資料示範</title>
+  <style>
+    :root { color-scheme: light; font-family: "Microsoft JhengHei", sans-serif; color: #172b3a; background: #edf2f6; }
+    body { margin: 0; line-height: 1.65; }
+    main { max-width: 1080px; margin: 24px auto; padding: 28px; background: white; }
+    h1 { font-size: 26px; margin: 0 0 10px; }
+    h2 { font-size: 21px; margin: 24px 0 12px; }
+    p { margin: 8px 0; }
+    .label { display: inline-block; background: #fff2ca; border: 1px solid #b68814; padding: 3px 12px; font-weight: bold; }
+    .meta, figcaption { color: #43576a; font-size: 14px; }
+    figure { margin: 18px 0; }
+    img { display: block; width: 100%; height: auto; border: 1px solid #c4d0da; }
+    table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+    th, td { padding: 9px 12px; text-align: left; border: 1px solid #c4d0da; vertical-align: top; }
+    th { background: #f0f5f8; }
+    section { break-inside: avoid; }
+    @media print { @page { size: A4; margin: 14mm; } body { background: white; } main { margin: 0; padding: 0; } section + section { break-before: page; } }
+  </style>
+</head>
+<body>
+<main>
+  <h1>WEBIt3 操作畫面補頁</h1>
+  <span class="label">本機假資料示範</span>
+  <p class="meta">畫面來源：2.041.58 隔離環境，2026-11-02。供SOP說明畫面與角色差異；不是公司實機、真實通知送達或正式登入授權紀錄。</p>
+  <section>
+    <h2>1. Teams 尚未設定的畫面</h2>
+    <ol>
+      <li>進入通知設定，查看Teams設定與目前啟用狀態。</li>
+      <li>確認網址是否已設定、通知是否啟用，以及畫面上的確認選項。這張示例仍未設定、未啟用。</li>
+      <li>公司實際設定另由本人處理；SOP截圖不放完整Webhook或秘密。是否送達，以實際接收端與時間證據另記。</li>
+    </ol>
+    <figure>
+      <img src="evidence/Teams設定_本機假資料示範_204158_2026-11-02.jpg" alt="本機假資料Teams設定畫面，未設定網址且尚未啟用。">
+      <figcaption>圖1｜只示範空設定狀態。沒有填入真實Webhook，沒有發送Teams訊息。</figcaption>
+    </figure>
+    <table>
+      <tr><th>可由本圖說明</th><th>仍須另留證據</th></tr>
+      <tr><td>設定欄位、空設定與未啟用狀態。</td><td>公司Workflows登入授權、實際網址建立、頻道收到訊息。</td></tr>
+    </table>
+  </section>
+  <section>
+    <h2>2. EOS 唯讀角色看歷史</h2>
+    <ol>
+      <li>以「只能看」角色進入EOS追蹤，展開項目查看保留依據與歷史。</li>
+      <li>確認唯讀提示，並確認沒有填寫或更正表單。這不代表具有修改權限。</li>
+      <li>閱讀保留紀錄時，仍分別看官方EOS日、通知、回覆與完成狀態；保留依據不會改掉廠商日期，也不等同更換完成。</li>
+    </ol>
+    <figure>
+      <img src="evidence/EOS唯讀角色_本機假資料示範_204158_2026-11-02.jpg" alt="本機假資料EOS唯讀角色，顯示歷史與只能看提示，沒有編輯表單。">
+      <figcaption>圖2｜假主機、假依據與本機合成帳號。只證明該隔離場景可閱讀歷史而無編輯表單；不是公司AD角色與正式資料驗證。</figcaption>
+    </figure>
+    <p class="meta">本補頁保留截圖原貌。日期預填與月底上限後續已在固定2.041.63以獨立測試驗證修正；本圖不作該修正的截圖證據。</p>
+  </section>
+  <p class="meta">取證索引：AI/整頁驗收_204158_2026-11-02.json；後續修正：AI/驗收204163_首輪彙總_2026-11-02.json。</p>
+</main>
+</body>
+</html>
