@@ -1,0 +1,22 @@
+{
+  "_comment": "每日檢查（xServer 每日檢查紀錄）的項目清單結構（2.060.x 試辦）。⚠ 會進公開中繼：只放項目結構與通用名稱，真實 IP／主機名／網址放系統設定（app_settings daily_check_settings：xserver_ips、banqiao、urls），不進版控。kind：auto＝系統判定、ref＝前一日參考（顯示數字但永遠要人勾）、manual＝人工（VC：設定 vm_vcenters 後改成每座一列系統預填、人確認，kind 變 ref；沒設定照舊人工）。rule＝判定規則代號（daily_check.RULES）。順序就是畫面與 Excel 的順序。",
+  "version": 1,
+  "items": [
+    {"code": "W-a", "section": "WhatsUp", "name": "離線裝置數（Device Down）", "kind": "auto", "rule": "wug_down"},
+    {"code": "W-b", "section": "WhatsUp", "name": "維護中裝置", "kind": "auto", "rule": "wug_maint"},
+    {"code": "W-c", "section": "WhatsUp", "name": "CPU 使用率超過門檻（1-xServer）", "kind": "ref", "rule": "perf_cpu"},
+    {"code": "W-d", "section": "WhatsUp", "name": "記憶體使用率超過門檻", "kind": "ref", "rule": "perf_mem"},
+    {"code": "W-e", "section": "WhatsUp", "name": "Linux SWAP 超過門檻（預設 90%）", "kind": "ref", "rule": "swap"},
+    {"code": "W-f", "section": "WhatsUp", "name": "硬碟使用率超過門檻（含單台例外）", "kind": "ref", "rule": "disk"},
+    {"code": "W-g", "section": "WhatsUp", "name": "輪詢未回報超過 1 小時（CPU／記憶體／磁碟）", "kind": "ref", "rule": "poll"},
+    {"code": "B", "section": "板橋交易所", "name": "板橋交易所主機（Down／Up）", "kind": "auto", "rule": "banqiao"},
+    {"code": "VC", "section": "VMware", "name": "vCenter（ESXi 台數、LUN 剩餘、警示）", "kind": "manual", "rule": "vmware", "extra": "vmware", "per": "vcenters"},
+    {"code": "S", "section": "Storage", "name": "Storage／NAS", "kind": "manual"},
+    {"code": "O-1", "section": "其他", "name": "機房環境（溫濕度，現場）", "kind": "manual"},
+    {"code": "O-2", "section": "其他", "name": "AD 對時（DC 時間差）", "kind": "auto", "rule": "ad_time"},
+    {"code": "O-3", "section": "其他", "name": "Print Server", "kind": "manual"},
+    {"code": "O-4", "section": "其他", "name": "IBM Guardium", "kind": "manual"},
+    {"code": "O-5", "section": "其他", "name": "隔離網段設備", "kind": "manual"}
+  ],
+  "phrases": ["已知維護中", "已通報負責單位", "已確認為誤報", "資料未到，改人工檢查", "持續觀察"]
+}

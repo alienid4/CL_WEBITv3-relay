@@ -1,0 +1,66 @@
+{
+  "_comment": "CIA 修正包（P1 第一批：寫法統一）的規則結構。⚠ 這份檔案會進公開中繼：只放規則結構與「虛構的」例子，真實機房名稱、真實範本提示文字放系統設定（app_settings，見 setting 欄），不進版控。kind：setting_map＝對照表在系統設定（寫法→標準名稱），value_map＝對照表就在這裡（不分大小寫、不分全半形、忽略空白），blank_text＝符合就列出、新值留空請人填（patterns 為正規式＋系統設定的文字清單），ip_format＝IP 欄格式錯，只列出、不自動改。同一格（資產＋欄位）只會被第一條符合的規則收。",
+  "version": 1,
+  "max_rows_per_package": 300,
+  "drop_warn_ratio": 0.8,
+  "decision_options": ["同意", "不同意"],
+  "reject_codes": [
+    "R1 原本寫法是對的，不用改",
+    "R2 新值不對",
+    "R3 這台已不在 CIA 管理範圍",
+    "R4 需要現場確認",
+    "R9 其他（請在備註寫明）"
+  ],
+  "rules": [
+    {
+      "id": "room_alias",
+      "label": "機房寫法統一",
+      "kind": "setting_map",
+      "fields": ["physical_location"],
+      "setting": "cia_fix_room_alias",
+      "reason": "同一個機房有多種寫法，統一成標準名稱",
+      "example": {"甲 機房": "01_甲機房", "甲機房(範例)": "01_甲機房"}
+    },
+    {
+      "id": "na_variant",
+      "label": "「沒有」統一寫 NA",
+      "kind": "value_map",
+      "fields": ["request_no", "rack_no"],
+      "map": {"NA": "NA", "N/A": "NA", "N.A.": "NA", "N.A": "NA"},
+      "reason": "「沒有」有 NA／N/A 等多種寫法，統一寫 NA"
+    },
+    {
+      "id": "hwno_zero",
+      "label": "硬體編號「沒有」統一寫 0",
+      "kind": "value_map",
+      "fields": ["hardware_no"],
+      "map": {"0": "0", "無": "0", "NA": "0", "N/A": "0", "N.A.": "0"},
+      "reason": "硬體編號沒有時統一寫 0（CIA 現有多數寫法）"
+    },
+    {
+      "id": "bigip_none",
+      "label": "BIG IP/VIP「沒有」統一寫 無",
+      "kind": "value_map",
+      "fields": ["big_ip_vip"],
+      "map": {"無": "無", "NA": "無", "N/A": "無", "N.A.": "無"},
+      "reason": "BIG IP/VIP 沒有時統一寫「無」"
+    },
+    {
+      "id": "unit_template",
+      "label": "使用單位留著範本提示文字",
+      "kind": "blank_text",
+      "fields": ["usage_unit"],
+      "patterns": ["^請(選擇|填寫|輸入)", "範例"],
+      "setting": "cia_fix_template_texts",
+      "reason": "填的是範本的提示文字，不是真的使用單位，請填正確的單位"
+    },
+    {
+      "id": "ip_format",
+      "label": "IP 格式錯",
+      "kind": "ip_format",
+      "fields": ["ip"],
+      "ignore": ["", "NA", "N/A", "無", "-"],
+      "reason": "IP 格式不對（只列出，不自動改），請填正確的 IP"
+    }
+  ]
+}

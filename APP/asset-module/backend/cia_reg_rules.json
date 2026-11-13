@@ -1,0 +1,50 @@
+{
+  "_comment": "9.4 CIA 補登（P2 VM 補登，試辦）的規則結構。只放結構與虛構例子；含真實值的（負責人名單、試辦類別）在 app_settings（cia_reg_assignees、cia_reg_pilot）。設計：docs/設計_CIA補登P2_2026-11-11.md。",
+  "vendor_header": "設備廠牌",
+  "vendor_after": "device_model",
+  "fixed_vm": {
+    "infra_type": "地端資產",
+    "rack_no": "(VM)",
+    "hardware_no": "0",
+    "quantity": "1",
+    "big_ip_vip": "無",
+    "device_vendor": "VMware",
+    "request_no": "NA"
+  },
+  "fixed_from_cia_vm_mode": ["device_model"],
+  "derived_fields": ["inventory_division", "inventory_department", "group_name", "asset_name", "asset_purpose", "owner",
+                     "usage_unit", "user_name", "custodian", "integrity", "confidentiality", "availability", "owning_company"],
+  "derived_min_share": 0.5,
+  "required_fields": ["api_id", "environment", "asset_status", "physical_location", "hostname", "ip", "os"],
+  "options": {
+    "environment": ["正式", "測試", "備援", "使用者測試(UAT)", "OA", "開發環境(DEV)"],
+    "asset_status": ["使用中", "停用", "報廢", "閒置"],
+    "owning_company": ["證券", "證期共用", "期貨"],
+    "device_vendor": ["VMware", "DELL", "IBM", "HP", "Lenovo", "EMC", "Oracle", "ATEN", "Finika", "Synology", "Apple", "Acer", "Aravision", "Raritan"],
+    "integrity": ["1", "2", "3"],
+    "confidentiality": ["1", "2", "3"],
+    "availability": ["1", "2", "3"]
+  },
+  "other_option": "其他（請在附加說明寫明）",
+  "os_option_min_count": 3,
+  "apid_confirm_options": ["是", "改了", "交統籌"],
+  "no_register_reasons": ["已下線", "非本公司", "測試暫用", "其實已在 CIA（請在附加說明寫序號）"],
+  "categories": ["DB", "AS400", "AIX", "NETWORK", "WIN", "LINUX", "無法判斷"],
+  "category_of_os_class": {"Windows": "WIN", "Linux": "LINUX", "AIX": "AIX", "IBM i": "AS400", "網路設備": "NETWORK"},
+  "db_ports": [1521, 1433, 3306, 5432, 50000, 27017],
+  "db_name_regex": "(^|[^a-z])(db|ora|sql)",
+  "name_prefix": {"strip_trailing_digits": true, "split_on": "-", "min_len": 3},
+  "suggest": {"min_samples": 3, "share_min": 0.8, "conflict_share": 0.5, "precision_min": 0.95, "backtest_min_predictions": 20},
+  "bases": [
+    {"id": "vc_folder", "label": "vCenter 資料夾", "enabled": true},
+    {"id": "name_prefix", "label": "命名前綴", "enabled": true},
+    {"id": "subnet", "label": "同網段 /24", "enabled": true},
+    {"id": "cluster", "label": "同 cluster", "enabled": true},
+    {"id": "esxi_host", "label": "同一台 ESXi", "enabled": true},
+    {"id": "agree2", "label": "兩個以上依據同意", "enabled": true}
+  ],
+  "per_person_cap": 150,
+  "pilot_default": ["WIN"],
+  "package_max_rows": 300,
+  "seen_days": 30
+}

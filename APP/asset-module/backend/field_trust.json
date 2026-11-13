@@ -1,0 +1,14 @@
+{
+  "_說明": "2.060.21（S11）欄位來源信任規則。machine＝機器自己知道的（信實掃／納管）；human＝人決定的（信較新那筆：彙整表標記時間 vs CIA 更新時間）；location＝實體位置（機櫃圖 Excel > 較新那筆）。都對不上又分不出新舊＝不猜，兩值並列標黃、進 9.4 彙整表比對的「欄位不一致」批次確認。確認後只寫回 CIA。",
+  "fields": [
+    {"key": "purpose", "label": "用途", "rule": "human"},
+    {"key": "host", "label": "主機名", "rule": "machine"},
+    {"key": "os", "label": "作業系統", "rule": "machine"},
+    {"key": "env", "label": "環境別", "rule": "human"},
+    {"key": "owner", "label": "負責人", "rule": "human"},
+    {"key": "system", "label": "業務系統", "rule": "human"},
+    {"key": "where", "label": "機房機櫃", "rule": "location"}
+  ],
+  "machine_order": ["onboard", "scan", "sheet", "cia"],
+  "sources": {"cia": "CIA", "sheet": "伺服器資料彙整表", "scan": "系統實掃（vCenter／RVTools）", "onboard": "納管回報"}
+}
