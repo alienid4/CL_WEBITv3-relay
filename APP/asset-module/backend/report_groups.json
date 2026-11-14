@@ -1,0 +1,200 @@
+{
+  "_comment": "系統組月報的分類規則。使用者每月要把三張表貼進部門報告，這裡放的是「哪個東西算哪一類」——那是業務判斷、會變，所以放設定檔不寫死程式（同 location_groups.json / environment_groups.json 的理由）。改完重啟 webit3-api 即生效。",
+  "_location_why": "叢集名稱前綴對到機房——命名慣例本身就帶著答案（BQ_PROD_… / NH_PROD_… / DN_UAT_…），跟叢集用途看 LOG 是同一招。優先用這個而不是 vCenter IP 對照表，理由是**這個檔案會進公開 relay**：把「哪台 vCenter 服務哪個機房」寫死在這裡等於把內部拓撲一起送出去。前綴是代號，資訊量低得多。",
+  "location_prefix": [
+    {
+      "name": "板橋",
+      "match": [
+        "BQ"
+      ]
+    },
+    {
+      "name": "內湖",
+      "match": [
+        "NH"
+      ]
+    },
+    {
+      "name": "敦南",
+      "match": [
+        "DN"
+      ]
+    }
+  ],
+  "_vcenter_location_why": "名稱前綴認不出來時的退路（例如 VCF-WLD02-UAT-CL01-DC 這種沒有機房代號的）。⚠️ 這裡刻意留空：真實的 vCenter IP → 機房對照存在資料庫的 app_settings（key: report_vcenter_location），不進版控、不外送，由使用者在畫面上維護。設定檔只留結構，不留值。",
+  "vcenter_location": {},
+  "_cluster_service_why": "叢集用途分類。RVTools 沒有「這個叢集做什麼」的欄位，但你們的命名慣例帶著答案：BQ_PROD_LOG_Cluster 的 LOG 就是。2026-08-21 用 221 正式資料驗過：照這規則算出板橋 Log 服務 10 台，與使用者月報上的 10 台完全吻合。⚠️ 這是靠命名推的，哪天有叢集沒照慣例命名就會歸錯而且沒人發現——所以畫面上要標明「依叢集名稱判定」，讓看的人知道依據。",
+  "cluster_service": [
+    {
+      "name": "Log服務",
+      "match": [
+        "LOG"
+      ]
+    }
+  ],
+  "cluster_service_fallback": "交易服務",
+  "_cluster_env_why": "叢集屬正式還是測試。同樣看名稱：UAT/TEST/DEV 視為測試，其餘正式。",
+  "cluster_environment": [
+    {
+      "name": "測試",
+      "match": [
+        "UAT",
+        "TEST",
+        "DEV"
+      ]
+    }
+  ],
+  "cluster_environment_fallback": "正式",
+  "_platform_why": "月報表1的平台分類。使用者 2026-08-21 拍板：Windows 要拆 Server/Client（Win10/Win11 算 Client）；網路設備歸網路組統計，本報告只列圖上那幾類。排除的不是刪掉——要在表下方註明排除幾台，否則總量對不起來時沒人講得出為什麼。",
+  "excluded_platforms": [
+    "網路設備",
+    "儲存設備",
+    "管理韌體(BMC)",
+    "軟體",
+    "未知"
+  ],
+  "_system_category_why": "分類名稱與分組**一律以系統管理員那份《系統盤點(全環境)Data.xlsx》的「分類」欄為準**（決策 H5、H7）。這是一套**專門為了產出部門報告三張圖而存在的分類**，跟 CIA 資訊資產清冊的「環境別」是兩回事，不要互相對照——使用者 2026-08-26 原話：「這個應該跟 CIA 無關，這個分類是為了要算出這三張 PPT 的類別所產生的一個獨特的分類。」\n\n所以報表頁B 的「核心／非核心／測試」三桶**全部看這一欄**，不看環境別。\n\n來源表的分類前面有 A~AA 的字母編號（`X.資安管理系統`），那是他們的排序不是名稱，匯入時會自動去掉。group 只有三種：核心交易／非核心／測試。\n\n⚠️ 新增的 6 個分類（（示範企業）App／精誠樹精靈App／三竹隨身證券App／大州證券系統／複委託中台／技術中台）的 group 是**推論**：來源表的字母編號 A~M 對應核心交易、N 之後對應非核心，既有 9 個核心與 10 個非核心全部符合這個規律。若管理員說法不同，改這裡即可。",
+  "_system_category_granularity": "⚠️ **這份清單只是「還沒匯入盤點表之前的出廠預設」，不是真實清單。**\n\n真實的分類名稱含公司識別字，而 `APP/` 底下的檔案一定會走去識別化（patch 與 relay 共用同一份規則）——2026-08-26 打 patch 時當場踩到：`C.<公司>證券App` 在包裡變成 `C.（示範企業）App`，套下去那三類 125 台會全部變成「分類名稱不合法」，而畫面上只會顯示一個數字，沒有人看得出是打包過程改的。\n\n既有規則（CLAUDE.md）本來就寫了：**含真實值的對照表放 `app_settings` 不進版控**。所以真實清單改由**匯入盤點表時登錄進 app_settings**（`report_system_categories`，見 system_report.seed_categories_from_rows）；這裡這份只在還沒匯入過時當預設值，名稱被去識別化改掉也不影響正確性。\n\ngroup 只有三種：核心交易／非核心／測試。來源表的字母編號同時是分組依據（A~M＝核心交易、N~Z＝非核心、AA＝測試），那是 2026-08-26 拿既有 19 個分類逐一比對出來的規律，**仍屬推論**；管理員說法不同就改 app_settings 那份。",
+  "system_categories": [
+    {
+      "name": "A.雷影密碼中心",
+      "group": "核心交易",
+      "color": "chart-3"
+    },
+    {
+      "name": "B.全景憑證系統",
+      "group": "核心交易",
+      "color": "chart-2"
+    },
+    {
+      "name": "C.（示範企業）App",
+      "group": "核心交易",
+      "color": "chart-7"
+    },
+    {
+      "name": "D.精誠樹精靈App",
+      "group": "核心交易",
+      "color": "chart-8"
+    },
+    {
+      "name": "E.三竹隨身證券App",
+      "group": "核心交易",
+      "color": "chart-9"
+    },
+    {
+      "name": "F.大州證券系統",
+      "group": "核心交易",
+      "color": "chart-10"
+    },
+    {
+      "name": "G.（示範企業）中台",
+      "group": "核心交易",
+      "color": "chart-4"
+    },
+    {
+      "name": "H.複委託中台",
+      "group": "核心交易",
+      "color": "chart-11"
+    },
+    {
+      "name": "I.嘉實新樹精靈AP",
+      "group": "核心交易",
+      "color": "chart-2"
+    },
+    {
+      "name": "J.嘉實新樹精靈Web",
+      "group": "核心交易",
+      "color": "chart-5"
+    },
+    {
+      "name": "K.示範期貨AP",
+      "group": "核心交易",
+      "color": "chart-1"
+    },
+    {
+      "name": "L.內/外期中台",
+      "group": "核心交易",
+      "color": "chart-6"
+    },
+    {
+      "name": "M.金融交易服務",
+      "group": "核心交易",
+      "color": "chart-1"
+    },
+    {
+      "name": "N.技術中台",
+      "group": "非核心",
+      "color": "chart-12"
+    },
+    {
+      "name": "R.自營/投資/風控系統/其他交易",
+      "group": "非核心",
+      "color": "chart-5"
+    },
+    {
+      "name": "S.客戶服務/數位通路/語音系統",
+      "group": "非核心",
+      "color": "chart-1"
+    },
+    {
+      "name": "T.財務/股務/法遵系統",
+      "group": "非核心",
+      "color": "chart-1"
+    },
+    {
+      "name": "U.資料平台/數據分析/AI",
+      "group": "非核心",
+      "color": "chart-2"
+    },
+    {
+      "name": "V.開發監控平台",
+      "group": "非核心",
+      "color": "chart-3"
+    },
+    {
+      "name": "W.內部應用支援",
+      "group": "非核心",
+      "color": "chart-3"
+    },
+    {
+      "name": "X.資安管理系統",
+      "group": "非核心",
+      "color": "chart-6"
+    },
+    {
+      "name": "Y.監控維運平台",
+      "group": "非核心",
+      "color": "chart-2"
+    },
+    {
+      "name": "Z.辦公支援系統",
+      "group": "非核心",
+      "color": "chart-4"
+    },
+    {
+      "name": "AA.測試環境",
+      "group": "測試",
+      "color": "chart-gray"
+    },
+    {
+      "name": "其他",
+      "group": "非核心",
+      "color": "chart-gray"
+    },
+    {
+      "name": "實體主機(ESXI、DB主機)",
+      "group": "核心交易",
+      "color": "chart-3"
+    }
+  ],
+  "_excluded_device_models_why": "頁A「各環境實體機分布」要排除的型號。**排除的是視角，不是資料**——資產庫仍然完整保留這些機器，只是這份「主機盤點」報表不列入。\n\n為什麼排除：這份報告要回答的是「機房裡有多少伺服器、要換幾台、EOS 風險多大」。PC／NB／資安網路設備放進去只會稀釋那個訊號——管理層看到「板橋 177 台主機」時，心裡想的是機櫃裡的伺服器，不是某人桌上的電腦。\n\n⚠️ 這份清單的**理由已於 2026-08-26 改寫**。原本的動機是「為了對上管理員 PPT 的 255／265 台」，那個動機**已經作廢**（決策 H3：管理員那份漏算了 Oracle／AS400／AIX／Power，他們自己也同意該補，所以不是我們多算）。動機錯的規則遲早會被下一個人用錯的方式延伸——現在的理由是「PC／NB／資安網路設備不屬於主機盤點的範圍」，跟任何外部數字無關。**不要再為了湊某個目標數字增刪這份清單。**\n\n⚠️ 排除不等於沒人管：`TippingPoint 5600 TXE`（入侵偵測防禦）與 `Paysecure`（金流加密機）一樣會 EOS、一樣要打補丁、一樣會被稽核問。`physical_distribution()` 必須回報排除了哪幾台、畫面上要能點開看——若「從主機報表排除」的實際效果是「從所有人的視野消失」，那不是分類，是把東西掃到地毯下。金融業的稽核缺失很多是這樣來的：不是沒人管，是每個人都以為別人在管。\n\n⚠️ 比對方式是**整格完全相等**（去頭尾空白、不分大小寫），不是子字串。用子字串會誤殺：例如 'PC' 若做子字串比對，會把 'HPE ProLiant'、'Exadata High Capacity' 這種含 pc/PC 的正常伺服器一起排掉。\n\n來源：2026-08-26 使用者逐一確認。這是業務判斷，不是程式推得出來的，所以放設定檔由人維護。",
+  "excluded_device_models": [
+    "PC",
+    "NB",
+    "TippingPoint 5600 TXE",
+    "Paysecure",
+    "W-70-CS",
+    "NVIDIA組裝機",
+    "ACER Veriton Vero M6735G"
+  ]
+}

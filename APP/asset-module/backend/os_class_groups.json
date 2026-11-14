@@ -1,0 +1,33 @@
+{
+  "_comment": "作業系統「大類」全站唯一一份規則（OS-CLASS-AUDIT，2026-10-18）。首頁平台長條、資產查詢 ?os_class=、月報表1、台數口徑試算（scripts/machine_key_trial.py 內嵌一份，test_os_class 釘住兩邊一樣）都讀這裡。",
+  "_howto": "rules 由上往下比對，先命中先算。field＝看哪個欄位（os／device_model／group_name／asset_purpose／guess＝掃描推測），contains＝小寫後包含任一字串，regex＝不分大小寫的正規式。都沒命中：os 有值→fallback_known，os 空白或在 unknown_values→fallback_empty。改完重啟 webit3-api 即生效。",
+  "_why_order": "1 儲存字樣先判（SAN Switch 屬儲存，使用者 2026-09-10）；2 CIA 群組明寫網路設備的優先（7.2.10 這種裸版本號只有群組／機型講得出是防火牆）；3 OS 字串；4 設備機型；5 資產用途只認管理介面字樣（用途欄是自由文字，最容易誤中，只當最後線索）；6 掃描推測只在前面全部判不出來時用。",
+  "classes": ["Windows", "Linux", "AIX", "IBM i", "虛擬化平台", "網路設備", "儲存設備", "管理介面", "其他", "未知"],
+  "fallback_known": "其他",
+  "fallback_empty": "未知",
+  "unknown_values": ["", "n/a", "na", "-", "--", "none", "null", "unknown"],
+  "rules": [
+    {"class": "儲存設備", "field": "os", "contains": ["儲存設備", "avamar", "flashsystem", "storwize", "vplex", "unisphere", "ontap", "fos v"]},
+    {"class": "儲存設備", "field": "device_model", "contains": ["san switch", "sanswitch", "flashsystem", "storwize", "vplex", "3par", "synology", "emc storage", "ibm storage", "dell storage", "hp storage", "hpe storage", "unityxt", "emc unity", "ibm svc", "data domain", "avamar"], "regex": ["\\bnas\\b"]},
+    {"class": "網路設備", "field": "group_name", "contains": ["網路設備"]},
+    {"class": "儲存設備", "field": "group_name", "contains": ["儲存設備"]},
+    {"class": "管理介面", "field": "os", "contains": ["idrac", "aten", "xclarity"], "regex": ["(?<![a-z])ilo(?![a-z])", "\\bbmc\\b", "\\bimm\\d?\\b"]},
+    {"class": "虛擬化平台", "field": "os", "contains": ["esxi", "vmware esx", "vsphere hypervisor", "photon", "vcenter", "vcsa", "vm vc"]},
+    {"class": "IBM i", "field": "os", "contains": ["as400", "as/400", "ibm i", "os/400", "i5/os"], "regex": ["^v[5-7]r\\d"]},
+    {"class": "AIX", "field": "os", "regex": ["\\baix\\b", "^\\d{4}-\\d{2}-\\d{2}(-\\d{4})?$"]},
+    {"class": "Windows", "field": "os", "contains": ["windows"], "regex": ["^win"]},
+    {"class": "Linux", "field": "os", "contains": ["linux", "rhel", "red hat", "redhat", "centos", "ubuntu", "suse", "sles", "debian", "rocky", "alma", "oracle", "fedora", "amazon", "coreos", "rhcos"]},
+    {"class": "網路設備", "field": "os", "contains": ["網路設備", "cisco", "ios xe", "ios-xe", "nx-os", "nxos", "apic", "junos", "juniper", "fortigate", "fortios", "fortinet", "fortimanager", "forcepoint", "palo alto", "paloalto", "pan-os", "big-ip", "aruba", "riverbed", "ixia", "voicegateway", "voice gateway", "network critical", "pulse secure", "pulsesecure"]},
+    {"class": "管理介面", "field": "device_model", "contains": ["idrac", "aten", "7063-cr", "7042-cr", "xclarity", "serial console"], "regex": ["\\bhmc\\b"]},
+    {"class": "IBM i", "field": "device_model", "contains": ["as400", "as/400"]},
+    {"class": "虛擬化平台", "field": "device_model", "contains": ["esxi"]},
+    {"class": "網路設備", "field": "device_model", "contains": ["cisco", "catalyst", "nexus", "forti", "juniper", "aruba", "big-ip", "palo alto", "paloalto", "pulsesecure", "pulse secure", "forcepoint", "riverbed", "ixia", "exalink", "voicegateway", "voice gateway", "procurve", "ws-c"], "regex": ["\\bf5\\b", "\\bfg-?\\d", "\\brouter\\b"]},
+    {"class": "管理介面", "field": "asset_purpose", "contains": ["idrac"], "regex": ["(?<![a-z])ilo(?![a-z])"]},
+    {"class": "Windows", "field": "guess", "contains": ["windows"]},
+    {"class": "Linux", "field": "guess", "contains": ["linux"]}
+  ],
+  "_adopt_groups_why": "2-1 納入管理「待納管」的頁簽分組（2026-10-18 使用者：加一個「大型主機（AIX／AS400）」頁簽）。classes＝哪些大類歸這個頁簽（照上面同一份大類判斷）；onboardable_classes＝其中哪些可以佈收集帳號（AIX 走 SSH／ksh 腳本；IBM i／AS400 不在可納管白名單，只能匯入／HMC）。這裡只決定頁簽歸屬，不改納管白名單。",
+  "adopt_groups": {
+    "mainframe": {"label": "大型主機（AIX／AS400）", "classes": ["AIX", "IBM i"], "onboardable_classes": ["AIX"]}
+  }
+}

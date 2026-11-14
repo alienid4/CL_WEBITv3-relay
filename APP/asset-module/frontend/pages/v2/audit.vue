@@ -1,0 +1,33 @@
+<script setup lang="ts">
+// 8.2 組態與上線檢核（2.x 第四批）：組態檢核｜上線檢查｜基線偏移。三個頁籤沿用既有畫面（同一份程式與 API：
+// /api/config-audit、/api/golive、/api/drift），收掉舊頁的頁首。
+// 2.047.0（V33）：上線檢查改 V2 原生（V2GoliveList），不再嵌入舊頁。
+// 2.048.8（V29）：基線偏移改 V2 原生（V2Drift），不再嵌入舊頁。
+definePageMeta({ layout: 'v2' })
+// 2.048.21（V25）：組態檢核改 V2 原生（V2ConfigAudit），不再嵌入舊頁。
+const route = useRoute()
+const router = useRouter()
+const TABS = [{ k: 'config', label: '組態檢核' }, { k: 'golive', label: '上線檢查' }, { k: 'drift', label: '基線偏移' }]
+const tab = computed({ get: () => (TABS.some(t => t.k === route.query.tab) ? String(route.query.tab) : 'config'), set: (v: string) => router.replace({ query: { tab: v } }) })
+</script>
+
+<template>
+  <V2Page v-model="tab" :tabs="TABS" width="wide">
+    <template #title><h1 class="h1">8.2 組態與上線檢核</h1></template>
+    <template #conclusion>
+      <span class="muted">組態檢核結果、上線前檢查表、上線後基線偏移。</span>
+      <InfoNote>上線檢查通過的那一刻，自動檢查項目的結果即成為基線；之後每天回檢，與基線不同即列入基線偏移。新設備的上線進度另見 6.1 納管作業「新設備上線」。</InfoNote>
+    </template>
+    <template #tab>
+      <ClientOnly v-if="tab === 'config' || tab === 'drift'"><V2Coverage :key="tab" :kind="tab" /></ClientOnly>
+      <V2GoliveList v-if="tab === 'golive'" />
+      <ClientOnly v-else-if="tab === 'drift'"><V2Drift /></ClientOnly>
+      <ClientOnly v-else><V2ConfigAudit /></ClientOnly>
+    </template>
+  </V2Page>
+</template>
+
+<style scoped>
+.h1 { margin: 0; font-size: 22px; font-weight: 700; }
+.muted { color: var(--muted); font-size: 13px; }
+</style>
