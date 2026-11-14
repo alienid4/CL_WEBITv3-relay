@@ -1,0 +1,11 @@
+/* Space Grotesk（有個性的顯示字體，用於數字/標題）——vendored 本地 woff2，公司擋 Google Fonts 也不怕。
+   拉丁字集，中文仍走系統字（Microsoft JhengHei / Noto Sans TC）。 */
+@font-face {
+  font-family: 'Space Grotesk';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('~/assets/fonts/SpaceGrotesk_6c252a.woff2') format('woff2'),
+       url('~/assets/fonts/SpaceGrotesk_68cd70.woff2') format('woff2'),
+       url('~/assets/fonts/SpaceGrotesk_64884e.woff2') format('woff2');
+}

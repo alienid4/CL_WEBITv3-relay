@@ -1,0 +1,20 @@
+{
+  "_說明": "存在可信度（這台機器真的存在嗎）的配分與時效。跟業務資料完整度（有沒有 CIA 登記）是兩件事，不要混。決策 EXIST1（使用者 2026-10-18）。改這裡不用改程式。",
+  "onboarded_days": 7,
+  "_說明2": "匯入／掃描類證據看『最新一次快照有沒有這台』，不看日曆天數；來源本身超過 source_stale_days 沒更新只出警示、不降級。收集帳號證據看時間：onboarded_days 內＝100，collect_evidence_days 內＝70。",
+  "collect_evidence_days": 30,
+  "source_stale_days": 60,
+  "snapshot_window_hours": 6,
+  "count_threshold": 70,
+  "levels": {
+    "onboarded":     {"score": 100, "label": "已納管（收集帳號 7 天內連得上）"},
+    "inventory":     {"score": 90,  "label": "在 DY／vCenter（RVTools）最新一次匯入裡"},
+    "collect_stale": {"score": 70,  "label": "收集帳號 8–30 天內連上過"},
+    "scan":          {"score": 70,  "label": "所屬網段最近一次掃描活著"},
+    "cia_only":      {"score": 60,  "label": "只有 CIA 登記（各來源最新快照都沒有它）"},
+    "none":          {"score": 0,   "label": "沒有任何證據"}
+  },
+  "inventory_sources": ["dynassets", "vcenter"],
+  "pending_confirm_sources": ["dynassets"],
+  "collect_service_sources": ["ssh_ss", "winrm"]
+}
