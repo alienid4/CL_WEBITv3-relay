@@ -26,7 +26,11 @@
 # -ProbeSwap   also reads the performance monitor list and the memory report of one device (-ProbeDeviceId, default: a device with a
 #              swap memory row, else the first member) into RawDir, to see whether Linux_SWAP has a value over REST. Not parsed. Off by default.
 # v6 (11-15): a big leaf group (1375 members) left more devices to fill than CpuFillMax 400, so CPU stayed PARTIAL every hour.
-#   CpuFillMax now 2000, and one failed per-device call is retried once after 2 s before the metric is marked PARTIAL.
+#   CpuFillMax now 2000; per-device calls are paced (FillPauseMs, default 100 ms before each call, so well under 10 calls a second);
+#   a call with no HTTP status (time out, connection or TLS error) or a 5xx is retried once after 2 s (4xx and our own caps are not);
+#   the run time box is 1500 s (the task runs every 30 minutes); the PARTIAL message says the real reason and how many were filled.
+#   Retries get a quarter of the fill budget on top: when more than a quarter of the devices need a retry, WhatsUp itself is unwell,
+#   so the run stops and reports instead of pushing harder.
 # v4: optional device status check for a short list of devices (the 1.5 Banqiao rows): wug_lp_devices.txt next to this script
 #   (or -DevicesFile), one IP or WhatsUp device id per line, optional ',name'. Per device: find it (IP: device search, exact address;
 #   id: device overview), its status (worst / best state, down monitors) and its last poll time (device ping report, lastPolled).
@@ -42,17 +46,18 @@ param(
   [switch]$SaveRaw,
   [switch]$ProbeSwap,
   [string]$ProbeDeviceId = '',
-  [int]$TimeBoxSeconds = 1200,
+  [int]$TimeBoxSeconds = 1500,
   [int]$MaxCalls = 3000,
   [int]$GroupMaxCalls = 0,
   [int]$MaxPagesPerReport = 400,
   [int]$MemberPageSize = 200,
   [int]$CpuCapDevices = 100,
   [int]$CpuFillMax = 2000,
+  [int]$FillPauseMs = 100,
   [string]$DevicesFile = ''
 )
 $ErrorActionPreference = 'Stop'
-$ScriptVersion = 'wug_lastpoll_collect 5'
+$ScriptVersion = 'wug_lastpoll_collect 6'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $Sep = ' > '
 $RowsPerPage = 50
@@ -375,18 +380,23 @@ foreach ($want in $Groups) {
             $miss = @($acc.Keys | Where-Object { -not $have.ContainsKey([string]$_) })
             if ($miss.Count -gt $CpuFillMax) { $st.error = 'report cap: ' + $miss.Count + ' devices to fill, more than CpuFillMax ' + $CpuFillMax }
             if ($miss.Count -le $CpuFillMax) {
-              $script:GBudget += $miss.Count
+              # budget: one call per device plus room for retries (a quarter), unless the caller fixed GroupMaxCalls
+              if ($GroupMaxCalls -le 0) { $script:GBudget += $miss.Count + [int][math]::Ceiling($miss.Count / 4) }
               $fillOk = $true
+              $filled = 0
               foreach ($did in $miss) {
                 $u = '/api/v1/devices/' + $did + '/reports/cpu-utilization?range=lastPolled&rollupByDevice=true&limit=0'
                 $x = $null
+                if ($FillPauseMs -gt 0) { Start-Sleep -Milliseconds $FillPauseMs }
                 try { $x = Get-Wug $u ($rp.key + $gi + '_dev_' + $did) }
                 catch {
                   $first = Short $_.Exception.Message
-                  if ($first -match 'budget|time box') { $fillOk = $false; if (-not $st.error) { $st.error = 'per-device cpu: ' + $first }; break }
+                  $code = Http-Code $_
+                  $again = ($first -notmatch 'cap|budget|time box') -and (($code -eq 0) -or ($code -ge 500))
+                  if (-not $again) { $fillOk = $false; $st.error = 'per-device cpu: ' + $first; if ($code) { $st.error = 'per-device cpu: HTTP ' + $code + ' ' + $first }; break }
                   Start-Sleep -Seconds 2
                   try { $x = Get-Wug $u ($rp.key + $gi + '_dev_' + $did + '_retry') }
-                  catch { $fillOk = $false; if (-not $st.error) { $st.error = 'per-device cpu: ' + (Short $_.Exception.Message) }; break }
+                  catch { $fillOk = $false; $st.error = 'per-device cpu (after retry): ' + (Short $_.Exception.Message); break }
                 }
                 $st.pages++
                 $list = @()
@@ -402,10 +412,13 @@ foreach ($want in $Groups) {
                   Add-Rows $racc @($r) $rp.item
                 }
                 # Review 11-14 P2: rows came back but none is this device = the reply is not understood; keep the metric PARTIAL.
-                if (($got -gt 0) -and ($matched -eq 0)) { $fillOk = $false; if (-not $st.error) { $st.error = 'per-device cpu: reply rows are not for device ' + $did }; break }
+                if (($got -gt 0) -and ($matched -eq 0)) { $fillOk = $false; $st.error = 'per-device cpu: reply rows are not for device ' + $did; break }
+                $filled++
               }
-              if ($fillOk) { $st.filled = $miss.Count; $st.capped.Clear() }
-              $m.filled_one_by_one = $miss.Count
+              $cnt.budget = $script:GBudget
+              if ($fillOk) { $st.filled = $miss.Count; $st.capped.Clear(); $st.error = '' }
+              elseif ($st.error) { $st.error = $st.error + ' (filled ' + $filled + ' of ' + $miss.Count + ')' }
+              $m.filled_one_by_one = $filled
             }
           }
           $rows = New-Object System.Collections.ArrayList
@@ -422,7 +435,8 @@ foreach ($want in $Groups) {
           elseif ($rows.Count -gt 0) {
             $m.ok = $false
             $m.partial = $true
-            if ($st.capped.Count -gt 0) { $m.error = 'partial: WhatsUp report cap (' + $CpuCapDevices + ' devices per query) in ' + (Short ((@($st.capped) | Sort-Object) -join ' | ')) }
+            if ($st.error) { $m.error = 'partial: ' + $st.error }
+            elseif ($st.capped.Count -gt 0) { $m.error = 'partial: WhatsUp report cap (' + $CpuCapDevices + ' devices per query) in ' + (Short ((@($st.capped) | Sort-Object) -join ' | ')) }
             else { $m.error = 'partial: ' + $st.pages + ' pages read; ' + $st.error }
           }
           else {
