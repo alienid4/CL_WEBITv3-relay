@@ -1,4 +1,4 @@
-﻿# UPGRADE14-SCRIPT v4 (2026-11-15): one double-click upgrade of the system host from the public relay.
+﻿# UPGRADE14-SCRIPT v5 (2026-11-15): one double-click upgrade of the system host from the public relay.
 # First run: asks the host address and root password once, and registers a dedicated key on the host that
 #   - only works from this PC (from=),
 #   - can only run /usr/local/sbin/webit3_upgrade_recv (install one package, or report the version): no shell, no forwarding.
@@ -13,7 +13,7 @@ function Say($m) { Write-Host $m; Add-Content -LiteralPath $log -Value ((Get-Dat
 
 # 0) self-update (v4): newer copy of this script lives on the relay's "tools" branch (main gets force-pushed, tools does not).
 #    Take it only if it is a newer UPGRADE14-SCRIPT; otherwise keep running this one. Never blocks the upgrade.
-$MyVer = 4
+$MyVer = 5
 try {
   $nu = Join-Path $here 'upgrade14.ps1.new'
   Invoke-WebRequest "https://raw.githubusercontent.com/$Repo/tools/upgrade14.ps1" -OutFile $nu -UseBasicParsing -TimeoutSec 20
@@ -27,6 +27,14 @@ try {
   }
   Remove-Item -LiteralPath $nu -Force
 } catch { Write-Host '（升級程式本身沒有新版可拿，照現有的跑）' }
+
+# 0b) v5：先把這台的其他程式（收集程式等）換成最新版，再升 .14。同步失敗不擋升級。
+$ts = Join-Path $here 'tools_sync.ps1'
+try {
+  if (-not (Test-Path -LiteralPath $ts)) { Invoke-WebRequest "https://raw.githubusercontent.com/$Repo/tools/tools_sync.ps1" -OutFile $ts -UseBasicParsing -TimeoutSec 30 }
+  Write-Host '更新這台電腦上的程式…'
+  & powershell -NoProfile -File $ts -Repo $Repo
+} catch { Write-Host ('（程式同步沒成功，照舊升級：' + $_.Exception.Message + '）') }
 
 # 1) host and login (asked once, kept in upgrade14.conf; not secret)
 $conf = Join-Path $here 'upgrade14.conf'

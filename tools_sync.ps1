@@ -1,9 +1,9 @@
-# TOOLS-SYNC-SCRIPT v1 (2026-11-15): keep the relay-PC scripts current, no copying by hand.
+# TOOLS-SYNC-SCRIPT v2 (2026-11-15): keep the relay-PC scripts current, no copying by hand.
 # Reads manifest.txt from the relay "tools" branch (one line per script: <file name> <sha256>), downloads each script,
 # checks its SHA256 and its "...-SCRIPT vN" header, and replaces the local copy only when the relay one is newer.
 # The old copy is kept as <name>.bak. Nothing is run; it only replaces files. Log: tools_sync_log.txt next to this script.
-# -Install: also registers the hourly task webit3_tools_sync (current user, runs only while logged on, no password stored).
-param([switch]$Install, [string]$Repo = 'alienid4/CL_WEBITv3-relay')
+# Run by upgrade14.ps1 each time the upgrade button is double-clicked; no scheduled task (user 11-15: update only when I click).
+param([string]$Repo = 'alienid4/CL_WEBITv3-relay')
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $dir = $PSScriptRoot
@@ -16,15 +16,6 @@ function Ver($path) {
   return 0
 }
 $raw = "https://raw.githubusercontent.com/$Repo/tools/"
-
-if ($Install) {
-  $act = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -WindowStyle Hidden -File "' + (Join-Path $dir 'tools_sync.ps1') + '"') -WorkingDirectory $dir
-  $trg = New-ScheduledTaskTrigger -Once -At ((Get-Date).Date.AddHours((Get-Date).Hour + 1).AddMinutes(50)) -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration (New-TimeSpan -Days 3650)
-  $usr = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-  $pri = New-ScheduledTaskPrincipal -UserId $usr -LogonType Interactive -RunLevel Limited
-  Register-ScheduledTask -TaskName 'webit3_tools_sync' -Action $act -Trigger $trg -Principal $pri -Force | Out-Null
-  Say ('INSTALL task webit3_tools_sync every hour at :50 as ' + $usr)
-}
 
 try { $man = (Invoke-WebRequest ($raw + 'manifest.txt') -UseBasicParsing -TimeoutSec 30).Content }
 catch { Say ('FAIL manifest: ' + $_.Exception.Message); exit 1 }
