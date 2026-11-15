@@ -1,4 +1,4 @@
-# WUG-LASTPOLL-COLLECT-SCRIPT v6 : WhatsUp Gold read-only "last polled" values per group, for the WEBIT3 daily check (GET only, plus one token login)
+# WUG-LASTPOLL-COLLECT-SCRIPT v7 : WhatsUp Gold read-only "last polled" values per group, for the WEBIT3 daily check (GET only, plus one token login)
 # What it does: asks WhatsUp the same thing the morning checker reads on screen with time = "last polled":
 #   CPU, memory and disk utilization of every device in a few WhatsUp groups (sub groups included), plus the member list of each group.
 # One run = 1 login + 1 group list + per group (members + cpu + memory + disk), every list read page by page until there is no next page.
@@ -25,6 +25,9 @@
 # -SaveRaw     also writes every raw reply to RawDir (for the first run: compare with the WhatsUp screen). Off by default.
 # -ProbeSwap   also reads the performance monitor list and the memory report of one device (-ProbeDeviceId, default: a device with a
 #              swap memory row, else the first member) into RawDir, to see whether Linux_SWAP has a value over REST. Not parsed. Off by default.
+# v7 (11-15 evening, first v6 run): the CPU report of 1-xServer (1375 members) stopped at "page cap 33" - the cap was sized from the
+#   member count, but that report reads child groups too (a device shows up under several of them), so it has more rows than members.
+#   The split (CPU) report now gets MaxPagesPerReport pages per call; the group call budget still bounds the whole group.
 # v6 (11-15): a big leaf group (1375 members) left more devices to fill than CpuFillMax 400, so CPU stayed PARTIAL every hour.
 #   CpuFillMax now 2000; per-device calls are paced (FillPauseMs, default 100 ms before each call, so well under 10 calls a second);
 #   a call with no HTTP status (time out, connection or TLS error) or a 5xx is retried once after 2 s (4xx and our own caps are not);
@@ -57,7 +60,7 @@ param(
   [string]$DevicesFile = ''
 )
 $ErrorActionPreference = 'Stop'
-$ScriptVersion = 'wug_lastpoll_collect 6'
+$ScriptVersion = 'wug_lastpoll_collect 7'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $Sep = ' > '
 $RowsPerPage = 50
@@ -361,7 +364,10 @@ foreach ($want in $Groups) {
         # Report budget for this group: the page caps from the member count (or GroupMaxCalls when given).
         $caps = @{}
         $sum = 0
-        foreach ($rp in $Reports) { $caps[$rp.key] = Page-Cap $acc.Count $rp.per; $sum += $caps[$rp.key] }
+        foreach ($rp in $Reports) {
+          if ($rp.split) { $caps[$rp.key] = $MaxPagesPerReport } else { $caps[$rp.key] = Page-Cap $acc.Count $rp.per }
+          $sum += $caps[$rp.key]
+        }
         $sum += 3 * (Tree-Of $id).Count                                   # CPU split: own devices + each child group
         if ($GroupMaxCalls -gt 0) { $script:GBudget = $GroupMaxCalls } else { $script:GBudget = $script:GCalls + $sum }
         $cnt.budget = $script:GBudget
