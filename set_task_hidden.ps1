@@ -1,4 +1,4 @@
-# SET-TASK-HIDDEN-SCRIPT v1 (2026-11-15): make the WEBIT3 collection tasks run without a window (user: the black window is annoying,
+# SET-TASK-HIDDEN-SCRIPT v2 (2026-11-15): make the WEBIT3 collection tasks run without a window (user: the black window is annoying,
 # and closing it by mistake kills the run - 19:50 run was lost that way, result 0xC000013A).
 # How: the task action becomes  conhost.exe --headless <old program> <old arguments>  (same program, same arguments, same folder,
 # same account and triggers; only no console window). Tasks already headless are left alone. Prints every action before and after.
@@ -6,6 +6,11 @@
 param([string]$Like = 'webit3_wug_*', [switch]$Undo)
 $ErrorActionPreference = 'Stop'
 $hc = Join-Path $env:SystemRoot 'System32\conhost.exe'
+# v2: a task with no working folder (webit3_wug_daily) made New-ScheduledTaskAction fail; only pass it when there is one.
+function NewAct([string]$Exe, [string]$Arg, [string]$Wd) {
+  if ($Wd) { return New-ScheduledTaskAction -Execute $Exe -Argument $Arg -WorkingDirectory $Wd }
+  return New-ScheduledTaskAction -Execute $Exe -Argument $Arg
+}
 foreach ($t in @(Get-ScheduledTask -TaskName $Like)) {
   $acts = @()
   $changed = $false
@@ -16,12 +21,12 @@ foreach ($t in @(Get-ScheduledTask -TaskName $Like)) {
       $rest = $a.Arguments.Substring(11)
       if ($rest.StartsWith('"')) { $i = $rest.IndexOf('"', 1); $exe = $rest.Substring(1, $i - 1); $arg = $rest.Substring($i + 1).TrimStart() }
       else { $i = $rest.IndexOf(' '); if ($i -lt 0) { $exe = $rest; $arg = '' } else { $exe = $rest.Substring(0, $i); $arg = $rest.Substring($i + 1) } }
-      $acts += New-ScheduledTaskAction -Execute $exe -Argument $arg -WorkingDirectory $a.WorkingDirectory
+      $acts += (NewAct $exe $arg $a.WorkingDirectory)
       $changed = $true
     } elseif ((-not $Undo) -and (-not $isHc)) {
       $arg = '--headless "' + $a.Execute + '"'
       if ($a.Arguments) { $arg += ' ' + $a.Arguments }
-      $acts += New-ScheduledTaskAction -Execute $hc -Argument $arg -WorkingDirectory $a.WorkingDirectory
+      $acts += (NewAct $hc $arg $a.WorkingDirectory)
       $changed = $true
     } else { $acts += $a }
   }
