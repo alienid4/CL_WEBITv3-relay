@@ -1,4 +1,4 @@
-# WUG-LASTPOLL-COLLECT-SCRIPT v7 : WhatsUp Gold read-only "last polled" values per group, for the WEBIT3 daily check (GET only, plus one token login)
+# WUG-LASTPOLL-COLLECT-SCRIPT v8 : WhatsUp Gold read-only "last polled" values per group, for the WEBIT3 daily check (GET only, plus one token login)
 # What it does: asks WhatsUp the same thing the morning checker reads on screen with time = "last polled":
 #   CPU, memory and disk utilization of every device in a few WhatsUp groups (sub groups included), plus the member list of each group.
 # One run = 1 login + 1 group list + per group (members + cpu + memory + disk), every list read page by page until there is no next page.
@@ -25,6 +25,11 @@
 # -SaveRaw     also writes every raw reply to RawDir (for the first run: compare with the WhatsUp screen). Off by default.
 # -ProbeSwap   also reads the performance monitor list and the memory report of one device (-ProbeDeviceId, default: a device with a
 #              swap memory row, else the first member) into RawDir, to see whether Linux_SWAP has a value over REST. Not parsed. Off by default.
+# v8 (11-15 20:20, first v7 run): even 400 pages gave the same 1189 devices - WhatsUp keeps handing out new page ids whose
+#   rows repeat what was already read. A page that adds no new row twice in a row now ends the list as read to the end
+#   ("pages repeat"); the CPU device-cap split and the one-by-one fill then run as designed.
+#   Only the CPU report (the split one) uses this rule, because a too-early stop there is made good by the one-by-one fill;
+#   group lists, members, memory and disk read pages exactly as before. Row fingerprint = name=value of every field, ordinal.
 # v7 (11-15 evening, first v6 run): the CPU report of 1-xServer (1375 members) stopped at "page cap 33" - the cap was sized from the
 #   member count, but that report reads child groups too (a device shows up under several of them), so it has more rows than members.
 #   The split (CPU) report now gets MaxPagesPerReport pages per call; the group call budget still bounds the whole group.
@@ -60,7 +65,7 @@ param(
   [string]$DevicesFile = ''
 )
 $ErrorActionPreference = 'Stop'
-$ScriptVersion = 'wug_lastpoll_collect 7'
+$ScriptVersion = 'wug_lastpoll_collect 8'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $Sep = ' > '
 $RowsPerPage = 50
@@ -156,10 +161,12 @@ function Http-Code($e) {
 # Pages of one list until there is no next page, at most MaxP pages. Never throws: returns what it read.
 #   complete = every page read; partial = some pages read, then a cap / error stopped it (rows kept); pages = 0 with error = nothing read.
 # Inner = '' when data itself is the list (reports), else the property under data (devices, groups).
-function Get-Pages([string]$Path, [string]$Inner, [string]$Label, [int]$MaxP) {
+function Get-Pages([string]$Path, [string]$Inner, [string]$Label, [int]$MaxP, [switch]$StopOnRepeat) {
   $res = @{ rows = (New-Object System.Collections.ArrayList); pages = 0; complete = $false; error = ''; code = 0 }
   $pg = ''
   $seen = @{}
+  $rowSeen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+  $dry = 0
   while ($true) {
     if ($res.pages -ge $MaxP) { $res.error = 'page cap ' + $MaxP + ' reached, more pages left'; break }
     $q = $Path
@@ -171,10 +178,22 @@ function Get-Pages([string]$Path, [string]$Inner, [string]$Label, [int]$MaxP) {
       if ((-not $x.data) -or (-not $x.data.PSObject.Properties[$Inner])) { $res.error = 'response has no data.' + $Inner; break }
       $list = $x.data.$Inner
     } else { $list = $x.data }
-    foreach ($r in @($list)) { if ($r) { [void]$res.rows.Add($r) } }
+    $fresh = 0
+    foreach ($r in @($list)) {
+      if (-not $r) { continue }
+      if ($StopOnRepeat) {
+        $rk = (@($r.PSObject.Properties | ForEach-Object { $_.Name + '=' + [string]$_.Value }) -join [char]31)
+        if (-not $rowSeen.Add($rk)) { continue }
+      }
+      $fresh++
+      [void]$res.rows.Add($r)
+    }
     $nx = ''
     if ($x.PSObject.Properties['paging'] -and $x.paging) { $nx = [string]$x.paging.nextPageId }
     if (-not $nx) { $res.complete = $true; break }
+    # v8: WhatsUp can keep giving new page ids for pages that only repeat rows already read; two such pages in a row = the end.
+    if ($StopOnRepeat -and ($fresh -eq 0) -and ($res.pages -gt 1)) { $dry++ } else { $dry = 0 }
+    if ($dry -ge 2) { $res.complete = $true; $res.note = 'pages repeat after ' + ($res.pages - 2) + ' pages'; break }
     if ($seen.ContainsKey($nx)) { $res.error = 'next page id repeated: ' + $nx; break }
     $seen[$nx] = 1
     $pg = $nx
@@ -264,7 +283,7 @@ function Add-Rows($Acc, $Rows, [string]$ItemProp) {
 # St: pages, capped (group paths still at the cap), error (first error), broken (a call stopped early).
 function Read-Split([string]$Gid, $Rp, [string]$Label, [int]$MaxP, $Acc, $St, [int]$Depth) {
   $base = '/api/v1/device-groups/' + $Gid + '/devices/reports/' + $Rp.path + '?range=lastPolled&returnHierarchy='
-  $r = Get-Pages ($base + 'true' + $Rp.extra + '&limit=0') '' $Label $MaxP
+  $r = Get-Pages ($base + 'true' + $Rp.extra + '&limit=0') '' $Label $MaxP -StopOnRepeat:([bool]$Rp.split)
   $St.pages += $r.pages
   Add-Rows $Acc $r.rows $Rp.item
   if (-not $r.complete) {
@@ -276,7 +295,7 @@ function Read-Split([string]$Gid, $Rp, [string]$Label, [int]$MaxP, $Acc, $St, [i
   $ch = @()
   if ($kids.ContainsKey($Gid)) { $ch = @($kids[$Gid]) }
   if (($ch.Count -eq 0) -or ($Depth -ge 12)) { [void]$St.capped.Add($paths[$Gid]); return }
-  $d = Get-Pages ($base + 'false' + $Rp.extra + '&limit=0') '' ($Label + '_own') $MaxP
+  $d = Get-Pages ($base + 'false' + $Rp.extra + '&limit=0') '' ($Label + '_own') $MaxP -StopOnRepeat:([bool]$Rp.split)
   $St.pages += $d.pages
   Add-Rows $Acc $d.rows $Rp.item
   if (-not $d.complete) { $St.broken = $true; if (-not $St.error) { $St.error = $d.error; $St.code = $d.code } }
