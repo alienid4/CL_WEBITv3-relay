@@ -1,0 +1,90 @@
+{
+  "created_at": "2026-11-02T13:53:51.654027+08:00",
+  "scope": "Packaging existing synthetic SOP supplementary artifacts, no product edit",
+  "packages": [
+    {
+      "source_archive": "C:\\AiProject\\CODEX_webit3\\AI\\SOP補頁_本機假資料_2026-11-02.zip",
+      "source_archive_sha256": "a5158b0a8a791e160608636f89fe68183a31c7bb1f9ddb8578164dffd0b99ff6",
+      "source_version": "2.041.58",
+      "delivery": "137/167",
+      "entry": "teams-eos/index.html",
+      "members": [
+        {
+          "path": "teams-eos/evidence/EOS唯讀角色_本機假資料示範_204158_2026-11-02.jpg",
+          "sha256": "2be52078001bd2e35854a793e607ef068252af2a1424947eb819b01857c9a6c8",
+          "size": 177678
+        },
+        {
+          "path": "teams-eos/evidence/Teams設定_本機假資料示範_204158_2026-11-02.jpg",
+          "sha256": "e60626b29d54e4d1e7a4cdb1b22fa5e97bc4510c7e0621754f89737f92575c1d",
+          "size": 119970
+        },
+        {
+          "path": "teams-eos/index.html",
+          "sha256": "42f1331464df7a6fc7cf4189bde9f4b3b08136c04efda4e7265f99b622bbebc1",
+          "size": 3784
+        }
+      ]
+    },
+    {
+      "source_archive": "C:\\AiProject\\CODEX_webit3\\AI\\SOP_ACT05_本機假資料_2026-11-02.zip",
+      "source_archive_sha256": "7c223805ea1f94bb59c2457dae82dd6835e20878b34b0c75988b37fc68cb7e80",
+      "source_version": "2.041.66",
+      "delivery": "189",
+      "entry": "act05/index.html",
+      "members": [
+        {
+          "path": "act05/index.html",
+          "sha256": "dc30346b6899ad82be4f18813a8c909a85cddb9d5ce93ff64bef733902799df1",
+          "size": 3822
+        },
+        {
+          "path": "act05/admin-audit.png",
+          "sha256": "3aff5c56a2159d2faa307caeb1d9da718277a5f9c719159a3d34353b13611b42",
+          "size": 181045
+        },
+        {
+          "path": "act05/viewer-active.png",
+          "sha256": "bfa2598dc3dcbb5027791602e57d77bc051640b73409e1c85655fd9a4b257d6d",
+          "size": 148946
+        },
+        {
+          "path": "act05/manifest.json",
+          "sha256": "e8e84d4e2a5257e317479aaae9765591a8c9a630c27e11fba1f9128dad8899fe",
+          "size": 707
+        }
+      ]
+    }
+  ],
+  "relative_image_checks": [
+    {
+      "html": "teams-eos/index.html",
+      "reference": "evidence/Teams設定_本機假資料示範_204158_2026-11-02.jpg",
+      "bundled": "teams-eos/evidence/Teams設定_本機假資料示範_204158_2026-11-02.jpg",
+      "hash_matches_source": true
+    },
+    {
+      "html": "teams-eos/index.html",
+      "reference": "evidence/EOS唯讀角色_本機假資料示範_204158_2026-11-02.jpg",
+      "bundled": "teams-eos/evidence/EOS唯讀角色_本機假資料示範_204158_2026-11-02.jpg",
+      "hash_matches_source": true
+    },
+    {
+      "html": "act05/index.html",
+      "reference": "admin-audit.png",
+      "bundled": "act05/admin-audit.png",
+      "hash_matches_source": true
+    },
+    {
+      "html": "act05/index.html",
+      "reference": "viewer-active.png",
+      "bundled": "act05/viewer-active.png",
+      "hash_matches_source": true
+    }
+  ],
+  "content_transformations": 0,
+  "new_visual_QA": false,
+  "product_integration_verified": false,
+  "automatic_pass_increment": 0,
+  "requirements": "See README.md; wait fixed candidate for actual product entry acceptance"
+}
