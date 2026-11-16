@@ -1,0 +1,71 @@
+# 去識別化樣本：由一份真實 RHEL 9 檢核結果改主機名／IP（示範網段 10.99.x）、移除機構內部辦法名稱。上游腳本 SV.202606290800，無 Check summary。
+系統組態檢查
+平台: Linux
+主機名: demo-rhel01
+IP地址: 10.99.198.11
+作業系統版本: Red Hat Enterprise Linux 9.8 (Plow)
+核心版本: 5.14.0-687.46.1.el9_8.x86_64
+腳本版本: SV.202606290800
+Check stated at: 2026-09-20 15:10:01
+TWGCB-ID;檢查結果;類別;原則設定名稱;標準設定值;目前值
+TWGCB-01-012-0066;Compliant;系統設定與維護;系統命令檔案權限;檔案之權限為755或更低權限於如右目錄 (/bin /sbin /usr/bin /usr/sbin /usr/local/bin /usr/local/sbin );無異常
+TWGCB-01-012-0072;Compliant;系統設定與維護;帳號不使用空白密碼;檢查有無使用空白密碼之帳號於 /etc/shadow 檔案;無異常
+TWGCB-01-012-0086;Compliant;系統設定與維護;檢查/etc/passwd檔案設定的群組;這項原則設定決定是否檢查 /etc/passwd 檔案帳號的群組，是否都存在於/etc/group檔案中，若不存在於/etc/group檔案中，代表群組權限管理不恰當，將可能對系統安全構成威脅;無異常
+TWGCB-01-012-0087;Compliant;系統設定與維護;唯一的UID;為每個使用者帳號設定唯一的UID，以提供適當的存取防護;無異常
+TWGCB-01-012-0088;Compliant;系統設定與維護;唯一的GID;為每個群組設定唯一的GID，以提供適當的存取防護;無異常
+TWGCB-01-012-0089;Compliant;系統設定與維護;唯一的使用者帳號名稱;檢查 /etc/passwd 確認每個使用者帳號名稱皆不相同;無重覆帳號
+TWGCB-01-012-0132;Compliant;日誌與稽核;auditd套件;檢查是否安裝auditd套件, ( #dnf install audit audit-libs ) ;已安裝 auditd套件
+TWGCB-01-012-0133;Compliant;日誌與稽核;auditd服務;檢查是否啟用auditd服務, ( #systemctl --now enable auditd ) ;auditd.service is enabled and running.
+TWGCB-01-012-0136;Compliant;日誌與稽核;稽核處理失敗時通知系統管理者;檢查稽核處理失敗時是否通知系統管理者, ( /etc/aliases 是否有 [postmaster: root] );The setup is correct.
+TWGCB-01-012-0137;Compliant;日誌與稽核;稽核日誌檔案所有權;避免因未經授權存取而洩露稽核記錄，讓攻擊者取得系統與組態設定等機敏資訊，( /etc/audit/auditd.conf 稽核日誌檔案擁有者與群組 root:root );-rw-r----- 1 root root 953 Sep 5 2025 /etc/audit/auditd.conf
+TWGCB-01-012-0138;Compliant;日誌與稽核;稽核日誌檔案權限;避免因未經授權存取而洩露稽核記錄，讓攻擊者取得系統與組態設定等機敏資訊，( /var/log/audit/audit.log 稽核日誌檔案權限為 600 或更低 );-rw------- 1 root root 4631967 Sep 20 15:10 /var/log/audit/audit.log
+TWGCB-01-012-0139;Compliant;日誌與稽核;稽核日誌目錄所有權;設定稽核日誌目錄所有權，避免因未經授權存取而洩露稽核紀錄，遭攻擊者取得系統與組態設定等機敏資訊，( /var/log/audit 目錄所有權擁有者與群組 root:root ) ;drwx------. 2 root root 99 Sep 19 10:10 /var/log/audit
+TWGCB-01-008-0140;Compliant;日誌與稽核;稽核日誌目錄權限;確保 /var/log/audit 目錄權限安全，建議 700 或更低權限;無異常: (700 /var/log/audit)
+TWGCB-01-012-0141;Compliant;日誌與稽核;稽核規則檔案權限;避免未經授權人員修改稽核規則，導致遺失重要稽核紀錄，( /etc/audit/rules.d/audit.rules 稽核規則檔案權限 600 或更低權限 ) ;-rw------- 1 root root 530 Jun 4 2025 /etc/audit/rules.d/audit.rules
+TWGCB-01-012-0142;Compliant;日誌與稽核;稽核設定檔案權限;避免未經授權人員修改稽核設定，導致遺失重要稽核紀錄，( /etc/audit/auditd.conf 稽核設定檔案權限 640 或更低權限 );-rw-r----- 1 root root 953 Sep 5 2025 /etc/audit/auditd.conf
+TWGCB-01-012-0144;Compliant;日誌與稽核;稽核工具所有權;設定稽核工具所有權，避免稽核紀錄遭未經授權修改共9個檔案，( /sbin/auditctl, /sbin/aureport, /sbin/ausearch, /sbin/autrace, /sbin/auditd, /sbin/audisp-remote, /sbin/audisp-syslog, /sbin/augenrules, /sbin/rsyslogd 稽核工具所有權 root:root );無異常, 所有文件的擁有者與群組均為 (root:root)。
+TWGCB-01-012-0149;Compliant;日誌與稽核;記錄變更登入與登出資訊事件;這項原則設定決定是否記錄變更登入與登出資訊之事件，請查看政府組態基準 Red Hat Enterprise Linux 9 TWGCB-01-012-0149 的設定和說明方法;無異常: (-w /var/run/faillock/ -p wa -k logins;-w /var/log/lastlog -p wa -k logins)
+TWGCB-01-012-0156;Compliant;日誌與稽核;記錄變更使用者或群組資訊事件;這項原則設定決定是否記錄變更使用者或群組資訊之事件，請查看政府組態基準 Red Hat Enterprise Linux 9 TWGCB-01-012-0156 的設定和說明方法;無異常
+TWGCB-01-012-0171;Compliant;日誌與稽核;記錄Pam_Faillock日誌檔案;這項原則設定決定是否記錄Pam_Faillock日誌檔案;無異常: (-w /var/log/faillock -p wa -k logins)
+TWGCB-01-012-0174;Compliant;日誌與稽核;rsyslog套件;這項原則設定決定是否安裝rsyslog套件;無異常: (rsyslog-8.2510.0-2.el9.x86_64)
+TWGCB-01-012-0175;Compliant;日誌與稽核;rsyslog服務;這項原則設定決定是否啟用rsyslog服務;無異常: (rsyslog.service                               enabled         enabled)
+TWGCB-01-012-0177;Compliant;日誌與稽核;設定rsyslog日誌記錄規則;記錄認證、授權及系統服務資訊;設定正確
+TWGCB-01-012-0178;Compliant;日誌與稽核;/var/log/messages檔案所有權;這項原則設定決定是否設定/var/log/messages檔案所有權;無異常: (-rw------- 1 root root 4747298 Sep 20 15:10 /var/log/messages)
+TWGCB-01-012-0179;Compliant;日誌與稽核;/var/log目錄所有權;這項原則設定決定是否設定/var/log目錄所有權;無異常: (drwxr-xr-x. 19 root root 4096 Sep 20 00:00 /var/log)
+TWGCB-01-012-0206;Compliant;帳號與存取控制;可設定密碼次數;這項原則設定決定重新設定密碼時，若密碼強度未達到系統要求，可以連續輸入密碼之次數，( 3以下，但須大於0 );無異常: ( retry = 3)
+TWGCB-01-012-0208;Compliant;帳號與存取控制;密碼最小長度;這項原則設定決定使用者帳號之密碼可包含的最少字元數，( 12個字元以上 );無異常: ( minlen = 8)
+TWGCB-01-012-0210;Compliant;帳號與存取控制;密碼必須至少包含數字個數;這項原則設定決定使用者帳號之密碼至少包含幾個數字，( 1個以上 );無異常: ( dcredit = -1)
+TWGCB-01-012-0211;Compliant;帳號與存取控制;密碼必須至少包含大寫字母個數;這項原則設定決定使用者帳號之密碼至少包含幾個大寫字母，( 1個以上 );無異常: ( ucredit = -1)
+TWGCB-01-012-0212;Compliant;帳號與存取控制;密碼必須至少包含小寫字母個數;這項原則設定決定使用者帳號之密碼至少包含幾個小寫字母，( 1個以上 );無異常: ( lcredit = -1)
+TWGCB-01-012-0213;Compliant;帳號與存取控制;密碼必須至少包含特殊字元個數;這項原則設定決定使用者帳號之密碼至少包含幾個特殊字元，( 1個以上 );無異常: ( ocredit = -1)
+TWGCB-01-012-0214;Compliant;帳號與存取控制;新密碼與舊密碼最少相異字元數;這項原則設定決定使用者帳號的新密碼內必須有幾個字元與舊密碼不同，( 3個以上 );無異常: ( difok = 3)
+TWGCB-01-012-0215;Compliant;帳號與存取控制;同一類別字元可連續使用個數;這項原則設定決定使用者帳號之密碼最多允許同一類別字元可連續使用個數，( 4以下，但須大於0 );無異常: ( maxclassrepeat = 4)
+TWGCB-01-012-0216;Compliant;帳號與存取控制;相同字元可連續使用個數;這項原則設定決定使用者帳號之密碼最多允許可連續使用幾個相同字元，( 3以下，但須大於0 );無異常: ( maxrepeat = 3)
+TWGCB-01-012-0217;Compliant;帳號與存取控制;必須禁止使用字典檔單字做為密碼;這項原則設定決定是否禁止使用字典檔單字做為使用者帳號的密碼，( 等於 1 不可為字典檔單字 );無異常: ( dictcheck = 1)
+TWGCB-01-012-0218;Compliant;帳號與存取控制;登入失敗鎖定次數;這項原則設定決定使用者帳號被鎖定的嘗試登入失敗次數，( /etc/security/faillock.conf ) 應設定為 0 以上，5 次以下 (包含 5);無異常: ( deny = 3)
+TWGCB-01-012-0223;Compliant;帳號與存取控制;密碼最短使用期限;設定密碼最短使用期限為1天，以避免使用者重複使用相同密碼;無異常: (PASS_MIN_DAYS   1	)
+TWGCB-01-012-0228;Compliant;帳號與存取控制;新使用者帳號預設建立使用者家目錄;為新增使用者帳號預設建立使用者家目錄，供使用者存放環境設定與個人檔案;無異常: (CREATE_HOME	yes)
+TWGCB-01-012-0266;Compliant;SSH設定;SSH MaxAuthTries參數;這項原則設定決定SSH是否設定MaxAuthTries參數；MaxAuthTries用以指定每個連線允許的驗證失敗次數，4以下，但須大於0，搭配 '/etc/security/faillock.conf'的 'deny = 3' 建議設定為2，以降低暴力攻擊風險;無異常: (MaxAuthTries 3)
+TWGCB-01-012-0267;Compliant;SSH設定;SSH IgnoreRhosts參數;此項原則設定決定SSH是否設定IgnoreRhosts參數，應設定為yes，避免使用.rhosts與.shosts檔案。;無異常: (IgnoreRhosts yes)
+TWGCB-01-012-0270;Compliant;SSH設定;SSH PermitEmptyPasswords參數;此項原則設定決定SSH是否設定PermitEmptyPasswords參數，禁止空通行碼帳號使用SSH進行遠端存取(應當設定 PermitEmptyPasswords no)，和系統層級的 PAM 'without-nullok' 模組互補。;無異常: (PermitEmptyPasswords no)
+TWGCB-01-012-0272;Compliant;SSH設定;SSH逾時時間;這項原則設定決定是否設定SSH逾時時間；ClientAliveInterval與ClientAliveCountMax可控制SSH連線逾時；建議 ClientAliveInterval ≤600、ClientAliveCountMax ≥0;無異常: (ClientAliveInterval=600; ClientAliveCountMax=0)
+FCB-01-002-0001;Compliant;帳號與存取控制;使用者於/etc/passwd檔案指定的家目錄必須存在;此原則要求 /etc/passwd 中所有一般使用者帳號 (UID>=1000, 且 shell 非 nologin) 的家目錄必須存在。;無異常
+FCB-01-002-0002;Compliant;日誌與稽核;所有稽核日誌在被消除前需先送到中央管控的日誌伺服器;這項原則設定決定是否將正確的 hostname，定義在 /etc/audit/auditd.conf 裡。;無異常: (name_format = hostname)
+FCB-01-002-0003;Compliant;日誌與稽核;儲存稽核日誌的空間使用量達75%時，必需有相對應的動作處理;這項原則設定讓稽核日誌空間儲存使用量達到75%時，可產生syslog。應包含這兩行 [space_left = 25%] 及 [space_left_action = SYSLOG];無異常: (space_left = 25%, space_left_action = SYSLOG)
+FCB-01-002-0004;Compliant;系統服務;關閉chrony服務避免變成chrony主機;這項原則設定在避免主機變成chrony主機(TimeSerever)，需設定為 'port 0';無異常: (port 0)
+FCB-01-002-0005;Compliant;系統服務;關閉chrony網路管理服務;禁用遠端 'chronyc' 管理，僅允許本地，防止未授權的管理指令，需設定為 'cmdport 0';無異常: (cmdport 0)
+FCB-01-002-0006;Compliant;系統服務;不能安裝sendmail套件;這項原則在設定是否安裝sendmail套件。;無異常: 未安裝 sendmail
+FCB-01-002-0007;Compliant;系統設定與維護;內建或外接的攝影機沒有在使用時需覆蓋或停用;禁用 UVC 驅動，將 'uvcvideo' 加入模組黑名單;已設定: (blacklist uvcvideo)
+FCB-01-002-0008;Compliant;系統設定與維護;停用 IEEE 1394(FireWire);於 /etc/modprobe.d/blacklist.conf 設定：install firewire-core /bin/false 與 blacklist firewire-core;已設定: (install firewire-core /bin/false) 與 (blacklist firewire-core)
+FCB-01-002-0009;Compliant;系統設定與維護;停用藍牙;在 /etc/modprobe.d/bluetooth.conf 設定 'install bluetooth /bin/false';已設定: (install bluetooth /bin/false)
+FCB-01-002-0015;Compliant;系統設定與維護;關閉Ctrl-Alt-Delete組合鍵功能;組合鍵的功能應關閉，避免誤按而造成系統重開機。SYSTEMD status 應是 Loaded: masked (ReasonS: Unit ctrl-alt-del.target is masked.);無異常: (mask_status=masked, loaded_status=Reason: Unit ctrl-alt-del.target is masked. )
+FCB-01-002-0016;Compliant;系統設定與維護;停用 Ctrl+Alt+Delete（GUI）;檢查 /etc/dconf/db/local.d/00-disable-CAD 是否設定 logout='';已設定: (logout='')
+FCB-01-002-0017;Compliant;系統設定與維護;關閉 systemd的 Ctrl-Alt-Delete組合鍵功能;Ctrl-Alt-Delete組合鍵的功能應關閉，避免誤按而造成系統重開機。檔案 ( /etc/systemd/system.conf ) 應該有這行 ( CtrlAltDelBurstAction=none ) ;無異常: (CtrlAltDelBurstAction=none)
+FCB-01-002-0018;Compliant;系統設定與維護;檢查 Postfix 是否存在;Postfix 不應安裝或存在 /etc/postfix;檢查結果: Postfix 未安裝且 /etc/postfix 不存在
+FCB-01-002-0019;Compliant;系統設定與維護;sudo 使用呼叫者密碼（禁用 rootpw/targetpw/runaspw）;檢查 /etc/sudoers.d/99-stig-password-policy 僅含三行 Defaults;已設定三行 Defaults
+FCB-01-002-0020;Compliant;系統設定與維護;啟用 GNOME Login Banner;檢查 /etc/dconf/db/local.d/01-banner-message 的 [org/gnome/login-screen] 與 banner-message-enable=true;已設定：banner 啟用（banner-message-enable=true）
+FCB-01-002-0021;Compliant;帳號與存取控制;authselect 必須啟用 without-nullok;執行 authselect current 應含 - without-nullok;無異常: (- without-nullok)
+FCB-01-002-0022;Compliant;日誌與稽核;確認chronyd沒有額外的權限;chronyd 應以 chrony 帳號運行，而非 root 或其他帳號;無異常: chronyd 正以 (chrony) 運行
+FCB-01-002-0024;Compliant;帳號與存取控制;帳戶鎖定時間;這項原則設定決定使用者帳號被鎖定後的帳號解鎖時間，以降低密碼暴力攻擊之影響，( unlock_time=0 ) 帳號鎖定後永久有效，不會自動解除鎖定。;無異常: /etc/security/faillock.conf:( unlock_time = 0)
+FCB-01-002-0025;Compliant;帳號與存取控制;強制執行密碼歷程記錄;藉由限制使用者不能持續重複使用舊密碼，令攻擊者難以猜測密碼以提升安全性，(remember=8 以上)，但依本機構資訊設備管理規定，密碼歷史紀錄至少3次即符合，參考兩個地方2擇1都可以;無異常: ( remember = 5)
+FCB-01-002-0026;Compliant;帳號與存取控制;密碼最長使用期限;設定密碼最長使用期限為90天，提高密碼更換頻率，提高攻擊者破解密碼難度;無異常: (PASS_MAX_DAYS	90)
