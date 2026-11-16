@@ -1,0 +1,26 @@
+#!/bin/sh
+# commit 前的強制關卡。任一項 FAIL -> exit 非 0 -> commit 被擋。
+#
+# ## 為什麼在 .project/hooks/ 而不是 .git/hooks/
+#
+# 舊做法是「把 .project/pre-commit 手動 cp 到 .git/hooks/」。2026-08-19 查證發現：
+# 這台開發機的 .git/hooks/ 是**空的**，core.hooksPath 也沒設——也就是說這道關卡
+# 寫好之後從來沒有真的跑過。8/15、8/16、8/19 三次「送不出去」的事故，不是有人
+# 忘了跑檢查，是檢查根本沒接上。靠人記得執行一個安裝步驟，就是遲早會漏。
+#
+# 改放版控目錄，一個 clone 只要設一次：
+#     git config core.hooksPath .project/hooks
+# 而且 checks.py 會反過來驗證這行設定在不在（見「pre-commit 關卡已接上」那項），
+# CI 也跑 checks.py，所以哪台機器沒接上會被明白講出來，不會再靜默失效。
+
+# 直譯器要挑對。Windows 的 `python` 常常是 Microsoft Store 那個佔位程式：
+# 它不執行任何東西、不印任何訊息、直接以非 0 結束，會變成一個沒有理由的 commit 失敗。
+# 專案 venv 永遠優先。
+if   [ -x ".venv/Scripts/python.exe" ]; then PY=".venv/Scripts/python.exe"
+elif [ -x ".venv/bin/python" ];        then PY=".venv/bin/python"
+elif command -v py    >/dev/null 2>&1; then PY="py -3"
+elif command -v python3 >/dev/null 2>&1; then PY="python3"
+else PY="python"
+fi
+
+exec $PY .project/checks.py

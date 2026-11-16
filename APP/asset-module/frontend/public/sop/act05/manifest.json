@@ -1,0 +1,23 @@
+{
+  "files": [
+    {
+      "file": "admin-audit.png",
+      "sha256": "3AFF5C56A2159D2FAA307CAEB1D9DA718277A5F9C719159A3D34353B13611B42"
+    },
+    {
+      "file": "index.html",
+      "sha256": "DC30346B6899AD82BE4F18813A8C909A85CDDB9D5CE93FF64BEF733902799DF1"
+    },
+    {
+      "file": "viewer-active.png",
+      "sha256": "BFA2598DC3DCBB5027791602E57D77BC051640B73409E1C85655FD9A4B257D6D"
+    }
+  ],
+  "synthetic_only": true,
+  "created_at": "2026-11-02T04:59:12.6832608+08:00",
+  "commit": "6696f97d4aab3c9d744d817a5b23014e85b0f8e2",
+  "qa": "AI/SOP_ACT05_版面QA_2026-11-02.json",
+  "version": "2.041.66",
+  "print_layout_verified": false,
+  "product_integration_done": false
+}

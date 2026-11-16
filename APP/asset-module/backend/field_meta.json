@@ -1,0 +1,258 @@
+{
+  "_comment": "資產欄位中繼資料：功能分類(category) × 兩層(layer)，設定檔化不寫死。①納入管理表單依此分區＋標層、②比對、③facts收集(auto欄位由對應平台collector帶入)共用。layer: tech=技術層(掃描/SSH自動)、biz=業務層(人填)。auto_source只在tech欄位有意義，且分平台(Linux/AIX/Windows/SNMP指令不同)。新增欄位(subnet/mac/hw_serial)CIA原無、技術可得，實作時加hardware欄位。",
+  "categories": [
+    {
+      "key": "host_system",
+      "label": "主機／系統"
+    },
+    {
+      "key": "network",
+      "label": "網路"
+    },
+    {
+      "key": "physical",
+      "label": "實體／硬體"
+    },
+    {
+      "key": "usage",
+      "label": "使用／保管"
+    },
+    {
+      "key": "inventory",
+      "label": "盤點／申請"
+    },
+    {
+      "key": "security",
+      "label": "資安分級"
+    },
+    {
+      "key": "other",
+      "label": "其他"
+    }
+  ],
+  "fields": {
+    "hostname": {
+      "label": "主機名稱",
+      "category": "host_system",
+      "layer": "tech",
+      "auto_source": {
+        "linux": "hostname / 反解",
+        "aix": "hostname",
+        "windows": "hostname"
+      }
+    },
+    "os": {
+      "label": "作業系統",
+      "category": "host_system",
+      "layer": "tech",
+      "auto_source": {
+        "linux": "/etc/os-release",
+        "aix": "oslevel -s",
+        "windows": "Win32_OperatingSystem"
+      }
+    },
+    "device_model": {
+      "label": "設備機型",
+      "category": "host_system",
+      "layer": "tech",
+      "auto_source": {
+        "linux": "dmidecode",
+        "aix": "prtconf / uname -M",
+        "windows": "Win32_ComputerSystem"
+      }
+    },
+    "is_vm": {
+      "label": "VM／實體",
+      "category": "host_system",
+      "layer": "tech",
+      "auto_source": {
+        "linux": "systemd-detect-virt",
+        "aix": "lparstat / prtconf",
+        "windows": "Win32_ComputerSystem.Model"
+      }
+    },
+    "asset_name": {
+      "label": "資產名稱",
+      "category": "host_system",
+      "layer": "biz"
+    },
+    "group_name": {
+      "label": "群組名稱",
+      "category": "host_system",
+      "layer": "biz"
+    },
+    "api_id": {
+      "label": "AP ID",
+      "category": "host_system",
+      "layer": "biz"
+    },
+    "infra_type": {
+      "label": "整體基礎架構",
+      "category": "host_system",
+      "layer": "biz"
+    },
+    "ip": {
+      "label": "IP",
+      "category": "network",
+      "layer": "tech",
+      "auto_source": {
+        "any": "網段掃描"
+      }
+    },
+    "subnet": {
+      "label": "網段",
+      "category": "network",
+      "layer": "tech",
+      "new": true,
+      "auto_source": {
+        "any": "IP 推算"
+      }
+    },
+    "mac": {
+      "label": "MAC",
+      "category": "network",
+      "layer": "tech",
+      "new": true,
+      "auto_source": {
+        "linux": "ip link",
+        "aix": "entstat / netstat",
+        "windows": "Get-NetAdapter"
+      }
+    },
+    "big_ip_vip": {
+      "label": "BIG IP／VIP",
+      "category": "network",
+      "layer": "biz"
+    },
+    "hw_serial": {
+      "label": "硬體序號",
+      "category": "physical",
+      "layer": "tech",
+      "new": true,
+      "needs_root": true,
+      "auto_source": {
+        "linux": "dmidecode -s system-serial-number",
+        "aix": "prtconf | grep Serial",
+        "windows": "Win32_BIOS.SerialNumber",
+        "snmp": "entPhysicalSerialNum"
+      }
+    },
+    "asset_serial": {
+      "label": "資產序號（公司資產編號）",
+      "category": "physical",
+      "layer": "biz"
+    },
+    "hardware_no": {
+      "label": "硬體編號",
+      "category": "physical",
+      "layer": "biz"
+    },
+    "physical_location": {
+      "label": "資產實體位置",
+      "category": "physical",
+      "layer": "biz"
+    },
+    "rack_no": {
+      "label": "機櫃編號",
+      "category": "physical",
+      "layer": "biz"
+    },
+    "quantity": {
+      "label": "數量",
+      "category": "physical",
+      "layer": "biz"
+    },
+    "owning_company": {
+      "label": "所屬公司",
+      "category": "physical",
+      "layer": "biz"
+    },
+    "asset_purpose": {
+      "label": "資產用途",
+      "category": "usage",
+      "layer": "biz",
+      "required": true
+    },
+    "custodian": {
+      "label": "保管者（SP）",
+      "category": "usage",
+      "layer": "biz"
+    },
+    "user_name": {
+      "label": "使用者（AP User）",
+      "category": "usage",
+      "layer": "biz"
+    },
+    "usage_unit": {
+      "label": "使用單位",
+      "category": "usage",
+      "layer": "biz"
+    },
+    "owner": {
+      "label": "擁有者",
+      "category": "usage",
+      "layer": "biz"
+    },
+    "environment": {
+      "label": "環境別",
+      "category": "usage",
+      "layer": "biz",
+      "required": true,
+      "options": [
+        "正式",
+        "測試",
+        "備援"
+      ]
+    },
+    "asset_status": {
+      "label": "資產狀態",
+      "category": "usage",
+      "layer": "biz",
+      "options": [
+        "使用中",
+        "閒置",
+        "維修中",
+        "停用",
+        "已汰換"
+      ]
+    },
+    "inventory_division": {
+      "label": "盤點單位-處別",
+      "category": "inventory",
+      "layer": "biz"
+    },
+    "inventory_department": {
+      "label": "盤點單位-部門",
+      "category": "inventory",
+      "layer": "biz"
+    },
+    "request_no": {
+      "label": "申請單編號",
+      "category": "inventory",
+      "layer": "biz"
+    },
+    "confidentiality": {
+      "label": "機密性 (C)",
+      "category": "security",
+      "layer": "biz",
+      "help": "數值 0–5，0 為最低、5 為最高（2026-08-25 使用者確認的分級口徑）"
+    },
+    "integrity": {
+      "label": "完整性 (I)",
+      "category": "security",
+      "layer": "biz",
+      "help": "數值 0–5，0 為最低、5 為最高（2026-08-25 使用者確認的分級口徑）"
+    },
+    "availability": {
+      "label": "可用性 (A)",
+      "category": "security",
+      "layer": "biz",
+      "help": "數值 0–5，0 為最低、5 為最高（2026-08-25 使用者確認的分級口徑）"
+    },
+    "remark": {
+      "label": "附加說明",
+      "category": "other",
+      "layer": "biz"
+    }
+  }
+}
