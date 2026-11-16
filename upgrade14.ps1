@@ -1,4 +1,6 @@
-﻿# UPGRADE14-SCRIPT v5 (2026-11-15): one double-click upgrade of the system host from the public relay.
+﻿# UPGRADE14-SCRIPT v6 (2026-11-17): v6 = real GitHub error (HTTP status + message, never a token), fallback to latest.txt when the API fails,
+#   SHA256 file is required (missing / malformed / mismatch = stop). Still interactive (asks the host and the root password once).
+# UPGRADE14-SCRIPT v5 (2026-11-15): one double-click upgrade of the system host from the public relay.
 # First run: asks the host address and root password once, and registers a dedicated key on the host that
 #   - only works from this PC (from=),
 #   - can only run /usr/local/sbin/webit3_upgrade_recv (install one package, or report the version): no shell, no forwarding.
@@ -10,10 +12,24 @@ $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
 $log = Join-Path $here 'upgrade14_log.txt'
 function Say($m) { Write-Host $m; Add-Content -LiteralPath $log -Value ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' ' + $m) }
+# What really went wrong with a web call: HTTP status + GitHub's own message, or "no HTTP response" + the network error.
+# Only the status, its text and the first 300 characters of the reply body are shown; request headers are never printed.
+function ErrInfo($e) {
+  $code = ''; $desc = ''; $body = ''
+  try { $r = $e.Exception.Response; if ($r) { $code = [string][int]$r.StatusCode; $desc = [string]$r.StatusDescription } } catch { }
+  try { if ($e.ErrorDetails -and $e.ErrorDetails.Message) { $body = [string]$e.ErrorDetails.Message } } catch { }
+  if (-not $body) {
+    try { $r = $e.Exception.Response; if ($r) { $sr = New-Object IO.StreamReader($r.GetResponseStream()); $body = $sr.ReadToEnd(); $sr.Dispose() } } catch { }
+  }
+  $body = (($body -replace '\s+', ' ').Trim())
+  if ($body.Length -gt 300) { $body = $body.Substring(0, 300) + '...' }
+  if ($code) { return ('HTTP ' + $code + ' ' + $desc + $(if ($body) { ' - ' + $body } else { '' })) }
+  return ('no HTTP response (network, DNS, proxy or certificate): ' + [string]$e.Exception.Message)
+}
 
 # 0) self-update (v4): newer copy of this script lives on the relay's "tools" branch (main gets force-pushed, tools does not).
 #    Take it only if it is a newer UPGRADE14-SCRIPT; otherwise keep running this one. Never blocks the upgrade.
-$MyVer = 5
+$MyVer = 6
 try {
   $nu = Join-Path $here 'upgrade14.ps1.new'
   Invoke-WebRequest "https://raw.githubusercontent.com/$Repo/tools/upgrade14.ps1" -OutFile $nu -UseBasicParsing -TimeoutSec 20
@@ -26,7 +42,7 @@ try {
     exit $LASTEXITCODE
   }
   Remove-Item -LiteralPath $nu -Force
-} catch { Write-Host '（升級程式本身沒有新版可拿，照現有的跑）' }
+} catch { Write-Host ('（升級程式本身沒有新版可拿，照現有的跑：' + (ErrInfo $_) + '）') }
 
 # 0b) v5：先把這台的其他程式（收集程式等）換成最新版，再升 .14。同步失敗不擋升級。
 $ts = Join-Path $here 'tools_sync.ps1'
@@ -135,16 +151,51 @@ if (-not ($cur -match '^\d+\.\d+\.\d+$')) { $cur = WebVer }
 # 4) newest package on the relay (largest version in the last 3 date folders)
 Write-Host '查最新版…'
 $hd = @{ 'User-Agent' = 'webit3-upgrade14' }
-# assign first, then loop: in PowerShell 5.1 Invoke-RestMethod hands a JSON array down the pipe as ONE object
-$top = Invoke-RestMethod "https://api.github.com/repos/$Repo/contents/patches" -Headers $hd
-$days = @(foreach ($x in $top) { if ($x.type -eq 'dir' -and $x.name -match '^\d{8}$') { $x } }) | Sort-Object name | Select-Object -Last 3
-$cands = foreach ($d in $days) {
-  $files = Invoke-RestMethod $d.url -Headers $hd
-  foreach ($f in $files) {
-    if ($f.name -match '^patch_[A-Za-z0-9_]+_v(\d+\.\d+\.\d+)\.tar\.gz$') {
-      [pscustomobject]@{ Name = $f.name; Path = $f.path; Ver = [version]$Matches[1]; VerText = $Matches[1] } } } }
-$p = $cands | Sort-Object Ver | Select-Object -Last 1
-if (-not $p) { Say 'FAIL relay 上找不到更新包'; exit 1 }
+$p = $null
+$apiErr = ''
+$ltErr = ''
+$via = ''
+# 4a) GitHub API. assign first, then loop: in PowerShell 5.1 Invoke-RestMethod hands a JSON array down the pipe as ONE object
+try {
+  $top = Invoke-RestMethod "https://api.github.com/repos/$Repo/contents/patches" -Headers $hd -TimeoutSec 30
+  $days = @(foreach ($x in $top) { if ($x.type -eq 'dir' -and $x.name -match '^\d{8}$') { $x } }) | Sort-Object name | Select-Object -Last 3
+  $cands = foreach ($d in $days) {
+    $files = Invoke-RestMethod $d.url -Headers $hd -TimeoutSec 30
+    foreach ($f in $files) {
+      if ($f.name -match '^patch_[A-Za-z0-9_]+_v(\d+\.\d+\.\d+)\.tar\.gz$') {
+        [pscustomobject]@{ Name = $f.name; Path = $f.path; Ver = [version]$Matches[1]; VerText = $Matches[1] } } } }
+  $p = $cands | Sort-Object Ver | Select-Object -Last 1
+  if ($p) { $via = 'GitHub API' } else { $apiErr = 'the API answered, but no patch_*_vX.Y.Z.tar.gz was in the newest 3 date folders' }
+} catch { $apiErr = ErrInfo $_ }
+if (-not $p) { Say ('WARN GitHub API 沒拿到更新包清單：' + $apiErr) }
+# 4b) fallback: patches/latest.txt on the relay (raw file, no API rate limit). One line: the package path (patches/YYYYMMDD/patch_..tar.gz) or just its name.
+if (-not $p) {
+  Write-Host '改讀 latest.txt（退路）…'
+  $ltRaw = ''
+  try {
+    $ltRaw = (Invoke-WebRequest "https://raw.githubusercontent.com/$Repo/main/patches/latest.txt" -UseBasicParsing -TimeoutSec 30).Content
+    if ($ltRaw -is [byte[]]) { $ltRaw = [Text.Encoding]::UTF8.GetString($ltRaw) }
+    $ltLine = ([string]$ltRaw -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -First 1)
+    if ($ltLine -and ($ltLine -match '(patch_[A-Za-z0-9_]+_v(\d+\.\d+\.\d+)\.tar\.gz)$')) {
+      $nm = $Matches[1]; $vt = $Matches[2]
+      $pth = $ltLine
+      if ($ltLine -notmatch '/') {
+        if ($nm -match '^patch_[A-Za-z0-9]+_(\d{8})_') { $pth = 'patches/' + $Matches[1] + '/' + $nm } else { $pth = '' }
+      }
+      if ($pth -and ($pth -match '^patches/\d{8}/patch_[A-Za-z0-9_]+_v\d+\.\d+\.\d+\.tar\.gz$')) {
+        $p = [pscustomobject]@{ Name = $nm; Path = $pth; Ver = [version]$vt; VerText = $vt }
+        $via = 'latest.txt'
+      } else { $ltErr = 'latest.txt text is not a package path I can use: ' + ([string]$ltLine) }
+    } else { $ltErr = 'latest.txt text has no patch_*_vX.Y.Z.tar.gz in it: ' + (([string]$ltRaw -replace '\s+', ' ').Trim()) }
+  } catch { $ltErr = ErrInfo $_ }
+  if ($ltErr.Length -gt 300) { $ltErr = $ltErr.Substring(0, 300) + '...' }
+}
+if (-not $p) {
+  Say ('FAIL 找不到更新包。GitHub API：' + $apiErr + '；latest.txt：' + $ltErr)
+  Write-Host '（API 回 403 多半是這台 IP 被 GitHub 限流，過一小時再試；回 404 看網址或 repo 名稱；沒有 HTTP 回應就是網路／代理／憑證。）'
+  exit 1
+}
+if ($via -eq 'latest.txt') { Say ('注意：GitHub API 失敗，改用 latest.txt 找到 ' + $p.Name) }
 $curText = '查不到'; if ($cur) { $curText = 'v' + $cur }
 Write-Host ('最新版 v' + $p.VerText + '；.14 目前 ' + $curText)
 if ($cur -and ([version]$cur -ge $p.Ver)) { Say ('SKIP .14 已經是 v' + $cur + '，不用升'); exit 0 }
@@ -153,12 +204,17 @@ if ($cur -and ([version]$cur -ge $p.Ver)) { Say ('SKIP .14 已經是 v' + $cur +
 $tgz = Join-Path $work $p.Name
 $shaF = Join-Path $work ($p.Name -replace '\.tar\.gz$', '.sha256')
 $raw = "https://raw.githubusercontent.com/$Repo/main/"
+if (Test-Path -LiteralPath $shaF) { Remove-Item -LiteralPath $shaF -Force }
 Write-Host '下載中…'
-Invoke-WebRequest ($raw + $p.Path) -OutFile $tgz -UseBasicParsing
-Invoke-WebRequest ($raw + ($p.Path -replace '\.tar\.gz$', '.sha256')) -OutFile $shaF -UseBasicParsing
+try { Invoke-WebRequest ($raw + $p.Path) -OutFile $tgz -UseBasicParsing -TimeoutSec 900 }
+catch { Say ('FAIL 下載更新包失敗 ' + $p.Name + '：' + (ErrInfo $_)); exit 1 }
+try { Invoke-WebRequest ($raw + ($p.Path -replace '\.tar\.gz$', '.sha256')) -OutFile $shaF -UseBasicParsing -TimeoutSec 60 }
+catch { Say ('FAIL 下載不到 .sha256，不能驗證就不安裝：' + (ErrInfo $_)); exit 1 }
 $want = ((Get-Content -LiteralPath $shaF -Raw).Trim() -split '\s+')[0].ToLower()
+if ($want -notmatch '^[0-9a-f]{64}$') { Say ('FAIL .sha256 檔內容不是 64 碼十六進位，不安裝：' + $p.Name); exit 1 }
 $got = (Get-FileHash -LiteralPath $tgz -Algorithm SHA256).Hash.ToLower()
-if ($want -ne $got) { Say ('FAIL SHA256 不符 ' + $p.Name); exit 1 }
+if ($want -ne $got) { Say ('FAIL SHA256 不符，不安裝 ' + $p.Name + '（官方 ' + $want.Substring(0, 12) + '…，下載 ' + $got.Substring(0, 12) + '…）'); exit 1 }
+Say ('OK SHA256 相符 ' + $p.Name + '（取得方式：' + $via + '）')
 
 # 6) send and install (the host checks SHA256 again before patch.sh)
 Write-Host ('安裝 v' + $p.VerText + ' 到 .14…')
