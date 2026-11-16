@@ -1,0 +1,49 @@
+{
+  "_comment": "S1 實體機補登（2.061.2）判定規則。⚠ 會進公開中繼：只放通用寫法，不放真實機名／IP。server_model_patterns＝型號像實體伺服器（不分大小寫）；virtual_patterns＝型號／作業系統／主機名像虛擬或容器（判非實體）；evidence_max_gap_days＝兩個證據的觀測日期相差超過幾天就不算互相佐證（降為單一來源，GPT 第 5 點）；apid_precision_min＝彙整表「資訊資產名稱」對業務系統名稱這條建議，用 CIA 已登記的機器回測準確率要到多少才預填 APID（沿用 9.4 的門檻精神），backtest_min_samples＝回測至少幾台才算數。 physical_os_classes＝作業系統大類是這些的直接判實體（設備本身不會是虛擬機）。",
+  "server_model_patterns": [
+    "poweredge",
+    "proliant",
+    "system ?x",
+    "thinksystem",
+    "\\bpower ?\\d",
+    "\\bpower systems\\b",
+    "\\bibm\\b",
+    "\\bdell\\b",
+    "\\bhpe?\\b",
+    "\\blenovo\\b",
+    "\\bfujitsu\\b",
+    "primergy",
+    "\\bucs\\b",
+    "\\binspur\\b",
+    "\\bhuawei\\b",
+    "fusionserver",
+    "\\bsupermicro\\b",
+    "\\boracle\\b",
+    "\\bsparc\\b",
+    "\\bexadata\\b",
+    "\\bnutanix\\b",
+    "\\bsynergy\\b",
+    "\\bapollo\\b",
+    "\\bblade\\b",
+    "伺服器",
+    "\\bserver\\b"
+  ],
+  "virtual_patterns": [
+    "virtual",
+    "vmware",
+    "\\bkvm\\b",
+    "hyper-?v",
+    "\\bxen\\b",
+    "docker",
+    "container",
+    "\\bvm\\b",
+    "虛擬"
+  ],
+  "evidence_max_gap_days": 30,
+  "apid_precision_min": 0.95,
+  "backtest_min_samples": 20,
+  "physical_os_classes": [
+    "網路設備",
+    "儲存設備"
+  ]
+}
