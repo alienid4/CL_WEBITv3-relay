@@ -1,0 +1,123 @@
+{
+  "_note": "去識別化的 WhatsUp 告警快照序列（假設備、假主機名、10.99.x）。給 test_wug_alert_replay.py 重播用：每個情境依序放批次 → wug_alert.tick（匯入→判定→通知）→ 對每一步的預期。時間是台北時間；2026-11-02 是週一。",
+  "systems": [
+    {"api_id": "R-001", "name": "示範核心", "sys_class": "S1-第一類系統軟體（核心）"},
+    {"api_id": "R-002", "name": "示範報表", "sys_class": "S2-第二類系統軟體"}
+  ],
+  "assets": [
+    {"serial": "RP-1", "hostname": "demo-core-p1", "ip": "10.99.7.11", "api_id": "R-001", "environment": "正式"},
+    {"serial": "RP-2", "hostname": "demo-core-p2", "ip": "10.99.7.12", "api_id": "R-001", "environment": "正式"},
+    {"serial": "RP-3", "hostname": "demo-core-p3", "ip": "10.99.7.13", "api_id": "R-001", "environment": "正式"},
+    {"serial": "RP-4", "hostname": "demo-core-p4", "ip": "10.99.7.14", "api_id": "R-001", "environment": "正式"},
+    {"serial": "RP-5", "hostname": "demo-rpt-p1", "ip": "10.99.7.21", "api_id": "R-002", "environment": "正式"}
+  ],
+  "scenarios": {
+    "非開盤_排程重開機7分回來_不立即推_進08點彙整": {
+      "items": [1, 2, 61, 62],
+      "start": "2026-11-02 22:00:00",
+      "settings": {"confirm_min": 10},
+      "digest_time": "08:00",
+      "steps": [
+        {"at_min": 0, "devices": [{"id": "1", "ip": "10.99.7.11", "monitors": [{"name": "Ping", "status": "Down at least 1 min"}]}],
+         "expect": {"notices": {"open": 0}}},
+        {"at_min": 5, "devices": [{"id": "1", "ip": "10.99.7.11", "monitors": [{"name": "Ping", "status": "Down at least 6 min"}]}],
+         "expect": {"notices": {"open": 0}}},
+        {"at_min": 7, "devices": [],
+         "expect": {"notices": {"open": 0, "brief": 0, "recover": 0}, "digest_pending": 1, "digest_contains": ["demo-core-p1", "已恢復"]}}
+      ]
+    },
+    "非開盤_真斷線滿10分才推一則_恢復再推一則": {
+      "items": [1, 2, 61, 62],
+      "start": "2026-11-02 22:00:00",
+      "settings": {"confirm_min": 10},
+      "digest_time": "08:00",
+      "steps": [
+        {"at_min": 0, "devices": [{"id": "1", "ip": "10.99.7.11", "monitors": [{"name": "Ping", "status": "Down at least 1 min"}]}],
+         "expect": {"notices": {"open": 0}}},
+        {"at_min": 8, "devices": [{"id": "1", "ip": "10.99.7.11", "monitors": [{"name": "Ping", "status": "Down at least 9 min"}]}],
+         "expect": {"notices": {"open": 0}}},
+        {"at_min": 11, "devices": [{"id": "1", "ip": "10.99.7.11", "monitors": [{"name": "Ping", "status": "Down at least 12 min"}]}],
+         "expect": {"notices": {"open": 1}, "pushed_includes": ["demo-core-p1", "非開盤"]}},
+        {"at_min": 30, "devices": [],
+         "expect": {"notices": {"open": 1, "recover": 1, "brief": 0}, "digest_pending": 0}}
+      ]
+    },
+    "開盤時段_也要斷滿門檻才推_開始時間依WhatsUp往回推": {
+      "items": [1, 61],
+      "start": "2026-11-02 10:00:00",
+      "settings": {"confirm_min": 10},
+      "digest_time": "08:00",
+      "steps": [
+        {"at_min": 0, "devices": [{"id": "1", "ip": "10.99.7.11", "monitors": [{"name": "Ping", "status": "Down at least 11 min"}]}],
+         "expect": {"notices": {"open": 1}, "pushed_includes": ["demo-core-p1", "開盤"]}},
+        {"at_min": 3, "devices": [],
+         "expect": {"notices": {"open": 1, "recover": 1}, "digest_pending": 0}}
+      ]
+    },
+    "WhatsUp維護中_照記錄_整段都不推": {
+      "items": [1, 2, 61, 62, 215],
+      "start": "2026-11-02 22:00:00",
+      "settings": {"confirm_min": 10},
+      "digest_time": "08:00",
+      "steps": [
+        {"at_min": 0, "devices": [{"id": "5", "ip": "10.99.7.12", "state": "Maintenance", "monitors": []}],
+         "expect": {"notices_total": 0, "events": 1, "tiers": {"5": "maint"}}},
+        {"at_min": 70, "devices": [{"id": "5", "ip": "10.99.7.12", "state": "Maintenance", "monitors": []}],
+         "expect": {"notices_total": 0, "tiers": {"5": "maint"}}},
+        {"at_min": 75, "devices": [],
+         "expect": {"notices_total": 0, "digest_pending": 0}}
+      ]
+    },
+    "只推主機組政策_非主機組不推_政策未知照推": {
+      "items": [215, 224],
+      "start": "2026-11-02 10:00:00",
+      "settings": {"confirm_min": 10, "notify_policies": "主機組"},
+      "digest_time": "08:00",
+      "steps": [
+        {"at_min": 0, "devices": [
+          {"id": "11", "ip": "10.99.7.11", "name": "demo-wug-a", "monitors": [{"name": "Ping", "status": "Down at least 12 min", "policy": "Action Policy(主機組/值班)"}]},
+          {"id": "12", "ip": "10.99.7.12", "name": "demo-wug-b", "monitors": [{"name": "SvcNoPolicy", "status": "Down at least 12 min", "policy": ""}]},
+          {"id": "13", "ip": "10.99.7.13", "name": "demo-wug-c", "monitors": [{"name": "SvcNetTeam", "status": "Down at least 12 min", "policy": "網管組"}]},
+          {"id": "14", "ip": "10.99.7.14", "name": "demo-wug-d", "monitors": [{"name": "SvcOldCollector", "status": "Down at least 12 min"}]}
+         ],
+         "expect": {"notices": {"open": 1}, "events": 4, "nopolicy": ["12", "13"],
+                    "pushed_includes": ["demo-core-p1", "demo-core-p4"], "pushed_excludes": ["SvcNoPolicy", "SvcNetTeam", "demo-core-p2", "demo-core-p3"]}},
+        {"at_min": 20, "devices": [],
+         "expect": {"notices": {"open": 1, "recover": 1}, "pushed_excludes": ["SvcNoPolicy", "SvcNetTeam", "demo-core-p2", "demo-core-p3"], "digest_pending": 0}}
+      ]
+    },
+    "同一批多台_合成一則_每台各一行": {
+      "items": [224],
+      "start": "2026-11-02 10:00:00",
+      "settings": {"confirm_min": 10},
+      "digest_time": "08:00",
+      "steps": [
+        {"at_min": 0, "devices": [
+          {"id": "21", "ip": "10.99.7.11", "monitors": [{"name": "Ping", "status": "Down at least 12 min"}]},
+          {"id": "22", "ip": "10.99.7.12", "monitors": [{"name": "Ping", "status": "Down at least 12 min"}, {"name": "HTTP", "status": "Down at least 12 min"}]},
+          {"id": "23", "ip": "10.99.7.13", "monitors": [{"name": "Ping", "status": "Down at least 12 min"}]}
+         ],
+         "expect": {"notices": {"open": 1}, "events": 4, "open_events_in_notice": 4,
+                    "pushed_includes": ["demo-core-p1", "demo-core-p2", "demo-core-p3", "2 個監控項目"]}}
+      ]
+    },
+    "中繼重送同一份快照_不重複開事件也不重推": {
+      "items": [224],
+      "start": "2026-11-02 10:00:00",
+      "settings": {"confirm_min": 10},
+      "digest_time": "08:00",
+      "steps": [
+        {"at_min": 0, "devices": [{"id": "31", "ip": "10.99.7.11", "monitors": [{"name": "Ping", "status": "Down at least 12 min"}]}],
+         "expect": {"notices": {"open": 1}, "events": 1}},
+        {"at_min": 0, "devices": [{"id": "31", "ip": "10.99.7.11", "monitors": [{"name": "Ping", "status": "Down at least 12 min"}]}],
+         "expect": {"notices": {"open": 1}, "events": 1}},
+        {"at_min": 1, "devices": [{"id": "31", "ip": "10.99.7.11", "monitors": [{"name": "Ping", "status": "Down at least 12 min"}]}],
+         "expect": {"notices": {"open": 1}, "events": 1}},
+        {"at_min": 4, "devices": [],
+         "expect": {"notices": {"open": 1, "recover": 1}, "events": 1}},
+        {"at_min": 4, "devices": [],
+         "expect": {"notices": {"open": 1, "recover": 1}, "events": 1}}
+      ]
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "_comment": "Q79「一個主機名＝一台」的護欄設定（2026-10-16，老賈決策／使用者授權）。目前只供試算（scripts/machine_key_trial.py）使用；221 試算觸發停損 a（不同環境被併成一台），尚未切換 system_stats.machine_key。",
+  "_howto": "含空白的不是合法主機名（多半是設備型號，如 xxx switch），一律當通用名。generic_names：正規化後（小寫、去網域、去空白）完全相等就不當身分；generic_patterns：正規表示式（不分大小寫），命中就不當身分。不當身分＝退回現行規則（主機名＋IP）。",
+  "_why_config": "哪些名字算「預設名／通用名」是資料判斷、會變（分類規則放設定檔，CLAUDE.md）。",
+  "generic_names": [
+    "localhost", "localhost.localdomain", "localdomain", "ubuntu", "debian", "rhel", "redhat",
+    "centos", "rocky", "almalinux", "oracle", "oraclelinux", "linux", "suse", "template", "tmp",
+    "temp", "test", "unknown", "none", "null", "n/a", "na", "-", "--", "host", "server", "vm",
+    "new", "default", "node", "master", "worker", "esxi", "esx", "switch", "router", "firewall",
+    "storage"
+  ],
+  "generic_patterns": [
+    "^\\d{1,3}(\\.\\d{1,3}){3}$",
+    "^[\\d\\W_]+$",
+    "^template",
+    "^tmpl",
+    "localhost",
+    "\\s"
+  ],
+  "guard_env_groups": ["正式", "備援", "測試"],
+  "min_machines_to_decide": 100,
+  "stop_loss": {
+    "env_groups": ["正式", "備援", "測試"],
+    "max_total_change_pct": 10,
+    "max_pending_pct": 5
+  }
+}
