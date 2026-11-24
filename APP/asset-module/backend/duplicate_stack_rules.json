@@ -1,0 +1,50 @@
+{
+  "_comment": "重複登記「堆疊／機箱元件」判定（2.060.x，CIA 修正包規格十-1）。同一台（machine_key，不改）多筆、內容又相同（本來會算『疑似真重複』）時，若同時符合下面全部條件，改歸『堆疊／機箱元件』：多台實體共用一個管理 IP、合起來是一台邏輯設備，不是重複登記，不給可少筆數。只影響重複登記清單的分類，不影響台數口徑（machine_key）。⚠ 會進公開中繼：只放通用寫法。match_fields＝看哪些欄位（只看型號／整體基礎架構／資產名稱，自由文字欄位不看）；patterns＝正規式（不分大小寫；英文字一律加字界 \\b，避免 OpenStack、Sirf 這種子字串誤中），任一筆登記的任一欄位符合就算；require_same_ip＝整組 IP 一樣、而且是真的 IP（placeholder_ips 與 0.0.0.0 不算）；require_distinct_hw＝hw_fields 裡至少有一欄、去掉 placeholder_values 後出現兩個以上不同的值（＝真的是不同的實體機件），沒有硬體序號可比就不改分類（保守）。檔案讀不到或格式錯＝不套用堆疊判定（全部照舊算疑似真重複）。",
+  "match_fields": [
+    "device_model",
+    "infra_type",
+    "asset_name"
+  ],
+  "patterns": [
+    "\\bstack\\b",
+    "堆疊",
+    "\\bchassis\\b",
+    "機箱",
+    "\\benclosure\\b",
+    "刀鋒",
+    "\\bblade\\b",
+    "\\bfex\\b",
+    "\\bline ?card\\b",
+    "\\bsupervisor\\b",
+    "模組",
+    "\\bmodule\\b",
+    "\\bvirtual chassis\\b",
+    "\\bvsx\\b",
+    "\\birf\\b"
+  ],
+  "require_same_ip": true,
+  "placeholder_ips": [
+    "",
+    "0.0.0.0",
+    "NA",
+    "N/A",
+    "無",
+    "-",
+    "NONE"
+  ],
+  "require_distinct_hw": true,
+  "hw_fields": [
+    "hw_serial",
+    "hardware_no",
+    "mac"
+  ],
+  "placeholder_values": [
+    "",
+    "0",
+    "NA",
+    "N/A",
+    "無",
+    "-",
+    "NONE"
+  ]
+}
