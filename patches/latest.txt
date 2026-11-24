@@ -1,1 +1,1 @@
-patches/20261123/patch_webit3_20261123_1124_v2.070.1.tar.gz
+patches/20261124/patch_webit3_20261124_1611_v2.070.2.tar.gz
