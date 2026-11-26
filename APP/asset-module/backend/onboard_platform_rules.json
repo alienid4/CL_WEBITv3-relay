@@ -1,0 +1,33 @@
+{
+  "_說明": "納管平台白名單（fail-closed，2026-10-19 使用者：「很害怕納管到網路設備，或者是非 Red Hat、非 CentOS、Debian 的設備」；同日拍板「Alma，Oracle Linux 擋」）。uname=Linux 的主機，只有 /etc/os-release 的 ID 在 allowed_ids 內、且沒有命中任何 appliance_markers 才會納管；其餘一律拒絕，不建帳號、不佈金鑰、不改 sudoers。只看 ID，不看 ID_LIKE（ID_LIKE 會讓 AlmaLinux／RHCOS／Amazon Linux／Kali 這類衍生版混進來）。改完要重啟服務（探測指令在啟動時組好），網頁一鍵與下載的 webit3_onboard.sh 都會照新清單。AIX／Windows 不受這份影響。",
+  "_標記說明": "appliance_markers 是唯讀存在測試（有 contains 的再比對內容），依各設備常見安裝位置整理，未在真實設備上逐一驗證。只放設備本體才有、一般主機裝代理程式不會出現的路徑（Rubrik／Cohesity 不放：一般主機裝備份代理也可能有類似目錄）。Debian／Ubuntu 底的設備（VyOS、SONiC、TrueNAS…）ID 會是 debian，只能靠這份標記擋。ostree 標記也會擋到 RHEL for Edge／image mode（刻意，fail-closed）。",
+  "allowed_ids": ["rhel", "centos", "rocky", "debian", "ubuntu"],
+  "legacy_release": {
+    "_說明": "沒有 /etc/os-release 檔的舊機（RHEL／CentOS 6）：讀 /etc/redhat-release 第一行比對開頭字樣換成 ID，再照 allowed_ids 判。deny_files 任一存在就不採用這條（Oracle Linux 6 的 redhat-release 也寫 Red Hat）。",
+    "file": "/etc/redhat-release",
+    "prefixes": [
+      {"prefix": "Red Hat Enterprise Linux", "id": "rhel"},
+      {"prefix": "CentOS", "id": "centos"}
+    ],
+    "deny_files": ["/etc/oracle-release", "/etc/enterprise-release"]
+  },
+  "appliance_markers": [
+    {"id": "f5_bigip", "name": "F5 BIG-IP", "path": "/VERSION", "contains": "BIG-IP"},
+    {"id": "f5_tmsh", "name": "F5 BIG-IP（tmsh）", "path": "/usr/bin/tmsh"},
+    {"id": "nutanix", "name": "Nutanix CVM", "path": "/etc/nutanix"},
+    {"id": "nutanix_home", "name": "Nutanix CVM", "path": "/home/nutanix/.nutanix_active_svm_partition"},
+    {"id": "checkpoint", "name": "Check Point Gaia", "path": "/etc/cp-release"},
+    {"id": "cisco_fmc", "name": "Cisco Firepower（FMC／FTD）", "path": "/etc/sf"},
+    {"id": "cisco_ise", "name": "Cisco ISE", "path": "/opt/CSCOcpm"},
+    {"id": "exadata", "name": "Oracle Exadata", "path": "/opt/oracle.cellos"},
+    {"id": "oda", "name": "Oracle Database Appliance", "path": "/opt/oracle/oak"},
+    {"id": "proxmox", "name": "Proxmox VE（虛擬化平台）", "path": "/etc/pve"},
+    {"id": "proxmox_backup", "name": "Proxmox Backup Server", "path": "/etc/proxmox-backup"},
+    {"id": "proxmox_mail", "name": "Proxmox Mail Gateway", "path": "/etc/pmg"},
+    {"id": "vyos", "name": "VyOS 路由器", "path": "/opt/vyatta"},
+    {"id": "sonic", "name": "SONiC 交換器", "path": "/etc/sonic"},
+    {"id": "truenas", "name": "TrueNAS SCALE", "path": "/data/freenas-v1.db"},
+    {"id": "openmediavault", "name": "OpenMediaVault", "path": "/etc/openmediavault"},
+    {"id": "coreos", "name": "ostree 系統（CoreOS／RHCOS／RHEL for Edge，由平台管理）", "path": "/run/ostree-booted"}
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "_說明": "優先序（PRECEDENCE1）：登入實測 > RVTools > 掃描 DYN（只算觀察到的事實：存活 IP、rDNS 主機名、SSH banner、開放埠；TTL／閘道／OUI 推測不算）> CIA。RVTools 的 OS 只在 CIA 空白或平台家族不同時才校正（VM 設定檔類型常不準）。掃描的 OS／IP 只列疑似不符。系統校正（measured_mismatch.py）：哪些欄位、哪種證據可以「自動校正」顯示值。CIA 匯入值一律不改，只改畫面主值與分類。不在 correct_by 的證據只列「疑似不符」。",
+  "fields": [
+    {"key": "os", "label": "作業系統", "correct_by": ["collect", "rvtools"]},
+    {"key": "ip", "label": "IP", "correct_by": ["collect"]},
+    {"key": "hostname", "label": "主機名", "correct_by": ["collect", "rvtools", "scan"]},
+    {"key": "mac", "label": "MAC", "correct_by": ["collect"]},
+    {"key": "cpu", "label": "CPU 數", "correct_by": ["collect"]},
+    {"key": "mem", "label": "記憶體", "correct_by": ["collect"]},
+    {"key": "disk", "label": "磁碟總量", "correct_by": []},
+    {"key": "model", "label": "設備機型", "correct_by": []}
+  ],
+  "sources": {
+    "collect": {"label": "SSH／WinRM 登入實測", "confidence": "確定"},
+    "rvtools": {"label": "RVTools 匯入", "confidence": "高"},
+    "scan": {"label": "存活掃描", "confidence": "疑似不符"}
+  }
+}

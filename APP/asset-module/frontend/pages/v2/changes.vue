@@ -1,0 +1,316 @@
+<script setup lang="ts">
+// 1.2 異動與異常（2.x 藍圖）：頁籤「每日異動｜掃描異常」（2.006.6 找碴 C14：「異常事件」只留給 4.1 事件應變）。合併舊 1-2 今日變化、1-4 問題清單、1-5 異常報告；
+// 帳實比對（過程數字）移到 9.2 數量對帳（任務走查 8）。資料：/api/changes（每晚快照比對）、/api/issues（異常事件）。
+definePageMeta({ layout: 'v2' })
+import { goneHint, issueState, qualityNotice, type QualityState, type ScanQuality } from '../../composables/scanQuality'
+const { isViewer, isAdmin } = useAuth()     // Q91：只能看的帳號不顯示寫入按鈕（後端另外擋，這裡只是別讓人白按）；「立即寫一份快照」只給管理員（收在「更多」）
+interface Cat { key: string; label: string }
+interface Changes { dates: string[]; categories: Cat[]; date: string | null; prev_date: string | null; prev_label?: string | null; compare?: { holiday_note?: string | null; [k: string]: any } | null; items: Record<string, any[]>; counts: Record<string, number>; snapshot?: { created_at: string; machines?: number } | null; reason?: string | null
+  machines?: number; machines_retired?: number; machines_rows?: number; tick_error?: string | null; change_total?: number
+  never_collected?: { count: number | null; unmanaged?: number; pending?: number; as_of?: string; error?: string | null } | null
+  freshness?: { today: boolean; historical?: boolean; no_new_input: boolean; reason: string | null; note?: string | null; latest_input: string | null } }
+const { apiFetch } = useApi()
+const { guardedFetch } = useGuardedFetch()
+const { showToast } = useToast()
+const route = useRoute()
+const router = useRouter()
+// 異常報告（2.008.8，舊版 /anomalies）：直接嵌入既有畫面，只讀
+// 2026-11-18（三層分離 H13）：磁碟、記憶體／SWAP 的 Teams 告警歷史從 ⚙ 通知設定搬到「告警歷史」頁籤（components/v2/AlertHistory.vue，只讀）
+const Anomalies = defineAsyncComponent(() => import('~/components/v2/Anomalies.vue'))      // 2.047.3 V18：V2 原生
+// 畫面重看（G）：舊「異常報告」頁籤名跟「掃描異常」幾乎一樣，改名「資料品質總覽」（網址 tab=anomaly 不變）
+const TABS = [{ k: 'daily', label: '每日異動' }, { k: 'week', label: '本週異動' }, { k: 'issues', label: '掃描異常' }, { k: 'anomaly', label: '資料品質總覽' }, { k: 'alerts', label: '告警歷史' }]
+const tab = computed({ get: () => (TABS.some(t => t.k === route.query.tab) ? String(route.query.tab) : 'daily'), set: (v: string) => router.replace({ query: { ...route.query, tab: v, cat: undefined } }) })
+const day = computed(() => (route.query.date ? String(route.query.date) : undefined))
+const cat = computed(() => (route.query.cat ? String(route.query.cat) : ''))
+const ch = ref<Changes | null>(null)
+const chErr = ref('')
+async function loadChanges() {
+  try { ch.value = await apiFetch<Changes>('/api/changes', { query: { date: day.value } }); chErr.value = '' } catch (e: any) { chErr.value = `每日異動載入失敗：${e?.data?.detail ?? e?.message ?? '未知錯誤'}` }
+}
+await loadChanges()
+watch(day, () => { mail.value = null; loadChanges() })
+// 2.065.3：整份日報匯出（摘要＋12 類各一頁＋網段＋信）、預覽那一天的摘要信（不寄）
+const apiBase = useRuntimeConfig().public.apiBase
+const exportQs = computed(() => (ch.value?.date ? '?date=' + ch.value.date : ''))
+const exportHref = computed(() => `${apiBase}/api/changes/export.xlsx` + exportQs.value)
+interface MailPreview { date: string | null; subject: string; body: string }
+const mail = ref<MailPreview | null>(null)
+const mailBusy = ref(false)
+async function previewMail() {
+  if (mail.value) { mail.value = null; return }
+  mailBusy.value = true
+  try { mail.value = await apiFetch<MailPreview>('/api/digest/preview', { query: { date: ch.value?.date || undefined } }) } catch (e: any) { showToast(`信件預覽失敗：${e?.data?.detail ?? e?.message ?? '未知錯誤'}`, 'error') } finally { mailBusy.value = false }
+}
+// V63（2.043.4）：舊 /changes 的「立即寫一份快照」搬過來（同一天重寫＝覆蓋；只能看的帳號不顯示，後端另外擋）
+const snapping = ref(false)
+async function snapNow() {
+  snapping.value = true
+  try {
+    const r = await guardedFetch<{ snap_date: string; machines: number }>('/api/changes/snapshot', { method: 'POST' })
+    showToast(`已寫入 ${r.snap_date} 快照：${r.machines.toLocaleString()} 台`, 'success')
+    if (day.value) router.replace({ query: { ...route.query, date: undefined, cat: undefined } })
+    else await loadChanges()
+  } catch (e: any) { showToast(`寫快照失敗：${e?.data?.detail ?? e?.message ?? '未知錯誤'}`, 'error') } finally { snapping.value = false }
+}
+// 找碴 C16：沒有前一份快照可比、或看的是最新一份但今天沒收集、或資料來源沒更新→不顯示 0，寫無資料
+const noData = computed(() => !ch.value?.date || !ch.value?.prev_date || (!day.value && !!ch.value?.freshness && (!ch.value.freshness.today || ch.value.freshness.no_new_input)))
+// 2.066.2（驗收疑點 3）：「從沒收集過」單獨一列（目前狀態，不算變化、不算收集中斷）；口徑＝資料覆蓋率 主機規格收集「未納管＋已納管尚無資料」
+const NEVER = 'never'
+const NEVER_LABEL = '從沒收集過的主機'      // 灰字另註「目前狀態」（畫面重看 B：不用括號）
+const nc = computed(() => ch.value?.never_collected ?? null)
+const ncText = (x: typeof nc.value) => (!x ? '—' : x.error || x.count == null ? '讀取失敗' : x.count)
+const catRows = computed(() => [...(ch.value?.categories ?? []).map(c => ({ key: c.key, label: c.label, n: ch.value?.counts?.[c.key] ?? 0, n_text: noData.value && !(ch.value?.counts?.[c.key]) ? '無資料' : (ch.value?.counts?.[c.key] ?? 0) })),
+  ...(ch.value?.date ? [{ key: NEVER, label: NEVER_LABEL, n: nc.value?.count ?? 0, n_text: ncText(nc.value) }] : [])])
+const catLabel = computed(() => (cat.value === NEVER ? NEVER_LABEL : ch.value?.categories.find(c => c.key === cat.value)?.label || cat.value))
+// 下鑽＝/api/v2/coverage?kind=spec&state=never：跟上面那格同一份計算（data_coverage rows）
+const neverRows = ref<any[]>([])
+const neverErr = ref('')
+const neverLoaded = ref(false)
+async function loadNever() {
+  if (cat.value !== NEVER) return
+  try { const r = await apiFetch<{ rows: any[] }>('/api/v2/coverage', { query: { kind: 'spec', state: NEVER } }); neverRows.value = r.rows ?? []; neverErr.value = ''; neverLoaded.value = true } catch (e: any) { neverErr.value = `從沒收集過清單載入失敗：${e?.data?.detail ?? e?.message ?? '未知錯誤'}` }
+}
+await loadNever()
+watch(cat, loadNever)
+const itemRows = computed(() => (ch.value?.items?.[cat.value] ?? []).map((x: any) => ({
+  ...x, name: x.hostname || x.serial || x.key, ip_text: Array.isArray(x.ips) ? x.ips.join('、') : x.ips,
+  before_text: Array.isArray(x.before) ? x.before.join('、') : x.before, after_text: Array.isArray(x.after) ? x.after.join('、') : x.after })))
+// 本週異動（2.044.0 從 1.1 首頁搬來；舊網址 /v2?tab=week 會轉到這裡）：/api/v2/home/week，每天＝「每日異動」同一份比對
+const week = ref<any>(null)
+const weekErr = ref('')
+async function loadWeek() { if (week.value) return; try { week.value = await apiFetch('/api/v2/home/week'); weekErr.value = '' } catch (e: any) { weekErr.value = `本週異動載入失敗：${e?.data?.detail ?? e?.message ?? '未知錯誤'}` } }
+if (tab.value === 'week') await loadWeek()
+watch(tab, t => { if (t === 'week') loadWeek() })
+// 比對欄：後端原文（含括號說明）只放匯出；畫面用小標籤「沒有快照／沒有前一天可比／資料沒更新」
+const weekStatus = (s: string) => (s.startsWith('無資料（未收集') ? '沒有快照' : s.startsWith('無資料（無前一份') ? '沒有前一天可比' : s.startsWith('無資料（前一個工作日') ? s.replace(/^無資料（/, '').replace(/）$/, '') : s.startsWith('無資料（資料來源未更新') ? '資料沒更新' : s)
+const weekRows = computed(() => (week.value?.rows ?? []).map((r: any) => ({ ...r, n_text: r.n == null ? '無資料' : r.n,
+  status_text: weekStatus(String(r.status ?? '')), status_tag: String(r.status ?? '').startsWith('無資料'), detail_text: String(r.detail ?? '').replace(/（另列）/g, '') })))
+function openCat(k: string) { router.replace({ query: { ...route.query, tab: 'daily', cat: k } }) }
+function pickDate(e: Event) { router.replace({ query: { ...route.query, date: (e.target as HTMLSelectElement).value || undefined, cat: undefined } }) }
+
+// 異常事件（舊問題清單／異常報告的清單部分）
+interface Issue { id: number; detected_at: string; hostname: string | null; ip: string | null; issue_type: string; is_read: number; handled_at: string | null; note?: string; miss_count?: number | null; auto_closed?: number; close_reason?: string | null }
+const issues = ref<Issue[]>([])
+// 最近一次掃描是否完整（不完整的那次不納入「異常消失」判定）
+// 讀不到≠完整：失敗時 loaded 維持 false，畫面明講「本次消失數字不可確認」並可重試（見 composables/scanQuality.ts）
+const qState = ref<QualityState>({ loaded: false, error: '', data: null })
+async function loadQuality() {
+  try { qState.value = { loaded: true, error: '', data: await apiFetch<ScanQuality | null>('/api/issues/scan-quality') } } catch (e: any) { qState.value = { loaded: false, error: e?.data?.detail ?? e?.message ?? '未知錯誤', data: null } }
+}
+const qNotice = computed(() => qualityNotice(qState.value))
+const confirmN = computed(() => qState.value.data?.confirm ?? null)
+// 預覽模式：系統預計自動關閉的清單（只有管理員看得到、按得到「套用」）
+interface PreviewItem { id: number; hostname: string | null; ip: string | null; reason: string }
+const preview = ref<{ count: number; preview_hash: string; items: PreviewItem[] }>({ count: 0, preview_hash: '', items: [] })
+const applying = ref(false)
+async function applyPreview() {
+  if (!window.confirm(`確定套用？將把 ${preview.value.count} 筆「異常消失」標為系統自動關閉（之後可逐筆還原）。`)) return
+  applying.value = true
+  try {
+    const r = await guardedFetch<{ applied: number }>('/api/issues/auto-close/apply', { method: 'POST', body: { preview_hash: preview.value.preview_hash } })
+    showToast(`已套用，關閉 ${r.applied} 筆`, 'success')
+    await Promise.all([loadIssues(), loadPreview(), loadQuality()])
+  } catch (e: any) { showToast(`套用失敗：${e?.data?.detail ?? e?.message ?? '未知錯誤'}`, 'error') } finally { applying.value = false }
+}
+async function restoreOne(r: { id: number; name: string }) {
+  const reason = window.prompt(`還原「${r.name}」的系統自動關閉。請填還原理由：`)
+  if (!reason || !reason.trim()) return
+  try {
+    await guardedFetch('/api/issues/' + r.id + '/restore-auto-close', { method: 'POST', body: { reason: reason.trim() } })
+    showToast('已還原', 'success')
+    await Promise.all([loadIssues(), loadPreview()])
+  } catch (e: any) { showToast(`還原失敗：${e?.data?.detail ?? e?.message ?? '未知錯誤'}`, 'error') }
+}
+async function loadPreview() {
+  if (!isAdmin?.value) return
+  try { preview.value = await apiFetch('/api/issues/auto-close/preview') } catch (e: any) { showToast(`預計自動關閉清單載入失敗：${e?.data?.detail ?? e?.message ?? '未知錯誤'}`, 'error') }
+}
+onMounted(() => { loadQuality(); loadPreview() })
+const issueErr = ref('')
+const issueLoaded = ref(false) // 曾成功取得（含成功但為空）；false＋有錯誤＝來源未取得，不可顯示 0
+// 舊 /issues?show=all（含已處理）轉過來時直接停在「全部」（N23）
+const issueFilter = ref<'open' | 'all' | 'auto'>(route.query.show === 'all' ? 'all' : 'open')   // auto＝只看系統自動關閉的
+const SCAN_ALERT = '掃描無回應'
+async function loadIssues() {
+  try { issues.value = await apiFetch<Issue[]>('/api/issues', { query: { sort_by: 'detected_at', order: 'desc' } }); issueErr.value = ''; issueLoaded.value = true } catch (e: any) { issueErr.value = `掃描異常載入失敗：${e?.data?.detail ?? e?.message ?? '未知錯誤'}` }
+}
+onMounted(loadIssues)
+// 項次在篩選前編好（找碴 C19：切「未處理／全部」不重新編號）
+const issueRows = computed(() => issues.value.map((i, n) => ({ i, n: n + 1 })).filter(({ i }) => issueFilter.value === 'all' || (issueFilter.value === 'auto' ? !!i.auto_closed : !i.is_read)).filter(({ i }) => !issueType.value || i.issue_type === issueType.value)
+  .map(({ i, n }) => {
+    // 掃描無回應（scan_health）不是單一主機：hostname 欄放的是那句說明，不可當主機連到主機履歷
+    const scan = i.issue_type === SCAN_ALERT
+    return { ...i, __no: n, scan, name: scan ? '網段掃描' : (i.hostname || i.ip || '—'), note: scan ? i.hostname : (i.note || (i.issue_type === '異常消失' && !i.is_read && i.miss_count == null ? '歷史次數未知' : '')),
+      state: issueState(i) }
+  }))
+const issueUnknown = computed(() => !!issueErr.value && !issueLoaded.value)
+const autoClosedCount = computed(() => issues.value.filter(i => i.auto_closed).length)
+const openCount = computed(() => issues.value.filter(i => !i.is_read).length)
+// 類型篩選（舊 /issues 的「異常消失／異常新增／漏登記」；也讀 ?type= 深連結）。類型清單＝固定三類＋資料裡實際出現的其他類型
+const ISSUE_TYPES = ['異常消失', '異常新增', '漏登記']
+const TYPE_HINT: Record<string, string> = { 異常消失: goneHint(confirmN.value), 異常新增: '之前沒看過、這次突然出現在網段上的主機。', 漏登記: '掃描掃得到，但 CIA 沒有這台的登記資料。' }
+const issueType = computed(() => (route.query.type ? String(route.query.type) : ''))      // 跟著網址走（上一頁／下一頁也同步）
+const typeList = computed(() => [...new Set([...ISSUE_TYPES, ...issues.value.map(i => i.issue_type)])])
+const typeCount = (t: string) => issues.value.filter(i => (!t || i.issue_type === t) && (issueFilter.value === 'all' || !i.is_read)).length
+function pickType(t: string) { picked.value = {}; router.replace({ query: { ...route.query, tab: 'issues', type: t || undefined } }) }
+const picked = ref<Record<string, boolean>>({})
+const pickedIds = computed(() => Object.keys(picked.value).filter(k => picked.value[k]).map(Number))
+async function markIds(ids: number[]) {
+  try {
+    const r = await guardedFetch<{ marked: number }>('/api/issues/mark-read', { method: 'POST', body: { ids } })
+    showToast(`已標記 ${r.marked} 筆為已處理`, 'success')
+    picked.value = {}
+    await loadIssues()
+  } catch (e: any) { showToast(`標記失敗：${e?.data?.detail ?? e?.message ?? '未知錯誤'}`, 'error') }
+}
+async function markRead() {
+  if (!pickedIds.value.length) return
+  if (!window.confirm(`將選取的 ${pickedIds.value.length} 筆標記為已處理？`)) return
+  await markIds(pickedIds.value)
+}
+// 單筆標已處理（舊 /issues 逐筆「標記已處理」）：同一支 mark-read、只送這一筆
+async function markOne(r: { id: number; name: string; issue_type: string }) {
+  if (!window.confirm(`將「${r.name}」（${r.issue_type}）標記為已處理？`)) return
+  await markIds([r.id])
+}
+// ===== 一行結論＋要你處理（畫面重看 A）：每件一顆按鈕，直達處理的地方 =====
+interface Todo { text: string; label: string; fn: () => void }
+const todos = computed<Todo[]>(() => {
+  const t: Todo[] = []
+  const gap = ch.value?.counts?.collect_gap ?? 0
+  if (ch.value && !noData.value && gap) t.push({ text: `收集中斷 ${gap} 台`, label: '看是哪幾台', fn: () => openCat('collect_gap') })
+  if (issueUnknown.value) t.push({ text: '掃描異常讀不到', label: '重新讀取', fn: loadIssues })
+  else if (openCount.value) t.push({ text: `掃描異常 ${openCount.value} 筆未處理`, label: '去處理', fn: () => router.replace({ query: { ...route.query, tab: 'issues', cat: undefined } }) })
+  return t
+})
+</script>
+
+<template>
+  <V2Page v-model="tab" :tabs="TABS">
+    <template #title><h1 class="h1">1.2 異動與異常</h1></template>
+    <template #conclusion>
+      <span v-if="ch" data-testid="chg-conclusion"><b>{{ todos.length ? `要你處理 ${todos.length} 件` : '沒有要你處理的事' }}</b><template v-if="todos.length">，最要緊：{{ todos[0].text }}</template>
+        <span class="aside">{{ ch.date || '尚無快照' }}・<template v-if="noData">異動無資料</template><template v-else>異動 {{ ch.change_total ?? 0 }} 筆</template>・<template v-if="issueUnknown">掃描異常讀不到</template><template v-else>掃描異常未處理 {{ openCount }} 筆</template></span>
+        <InfoNote>每日異動是 {{ ch.date || '—' }} 跟 {{ ch.prev_label || ch.prev_date || '—' }}（前一個工作日）兩天比出來的。收集中斷不算異動，另外列。</InfoNote>
+        <span v-if="issueErr && !issueUnknown" class="stale">掃描異常沒更新到，顯示的是上次讀到的</span></span>
+    </template>
+    <div v-if="ch" class="todo" :class="{ ok: !todos.length }" data-testid="chg-todo">
+      <b v-if="todos.length">要你處理（{{ todos.length }} 件）</b><b v-else>沒有要你處理的事</b>
+      <div v-for="(t, i) in todos" :key="i" class="it">
+        <span class="n mono">T{{ i + 1 }}</span><span>{{ t.text }}</span><span class="sp" />
+        <button type="button" class="btn small" @click="t.fn()">{{ t.label }}</button>
+      </div>
+    </div>
+    <template #tab>
+      <ClientOnly v-if="tab === 'anomaly'"><Anomalies /></ClientOnly>
+      <V2AlertHistory v-else-if="tab === 'alerts'" />
+      <template v-else-if="tab === 'daily'">
+        <p v-if="chErr" class="err">{{ chErr }}</p>
+        <div class="bar">
+          <label>日期 <select :value="ch?.date || ''" @change="pickDate"><option v-for="d in ch?.dates ?? []" :key="d" :value="d">{{ d }}</option></select></label>
+          <span v-if="ch?.prev_label" class="muted" data-testid="chg-compare">與 {{ ch.prev_label }} 比較</span>
+          <span v-if="ch?.compare?.holiday_note" class="stale" data-testid="chg-holiday-note">{{ ch.compare.holiday_note }}</span>
+          <span v-if="ch?.reason" class="muted" data-testid="chg-reason">{{ ch.reason }}</span>
+          <span v-if="(!day || ch?.freshness?.historical) && ch?.freshness?.reason" class="stale">{{ ch.freshness.reason }}</span>
+          <span v-if="day && ch?.freshness?.note" class="muted">{{ ch.freshness.note }}</span>
+          <InfoNote>
+            每晚 05:30 留一份每台主機的快照，與前一個工作日的快照比對（週末、休市日跳過；週一比上個交易日，前一個工作日沒有快照就不比）。位置記的是 CIA 登記的位置（機櫃名用畫面上的櫃名），不套用機櫃圖上的「位置更正」——現場更正過的設備，這裡跟機櫃圖、主機詳細頁會不一樣，直到 CIA 改成跟現場一致。點筆數看明細；摘要信設定在 <NuxtLink to="/v2/settings?st=notify">⚙ 系統設定・通知設定</NuxtLink>。
+            <template v-if="ch?.date"><br>「從沒收集過的主機」＝現役主機裡，從來沒收到過主機資料的台數：未納管 {{ nc?.unmanaged ?? '—' }} 台＋已納管但還沒有資料 {{ nc?.pending ?? '—' }} 台。這是現在的狀態（{{ nc?.as_of || '—' }}），不是那一天的值；不算異動，也不算收集中斷（收集中斷只算收集過、後來斷掉的）。收集失敗過的（連不上、權限不足、已納管但失聯）算在「收集失敗」。不支援收集的設備（VMware、網路、儲存…）不列入。跟「資料覆蓋率」用同一套判斷，點數字看是哪幾台。</template>
+            <template v-if="ch?.machines != null"><br>現役 {{ ch.machines.toLocaleString() }} 台・每日留存 {{ (ch.machines_rows ?? 0).toLocaleString() }} 筆。現役＝不含退役；每日留存＝現役＋退役（{{ (ch?.machines_retired ?? 0).toLocaleString() }} 台），退役的也留著才比得出「消失（退役）」，所以兩個數字不一樣。現役也含「只有網路掃描看到、資產庫沒有登記」的台，2.1 主機查詢只列有登記的，所以這裡可能比 2.1 多幾台。</template>
+            <template v-if="isAdmin"><br>「立即寫一份快照」：馬上把每台主機現在的狀態留一份（平常每晚 05:30 自動留）；同一天重寫會蓋掉當天那一份。</template>
+          </InfoNote>
+          <a v-if="!isViewer && ch?.date" class="btn small" :href="exportHref">匯出整份日報</a>
+          <details v-if="ch?.date || isAdmin || ch?.machines != null" class="more" data-testid="chg-more">
+            <summary>更多</summary>
+            <div class="bar">
+              <span v-if="ch?.machines != null" class="muted">現役 <b class="mono">{{ ch.machines.toLocaleString() }}</b> 台・每日留存 <b class="mono">{{ (ch.machines_rows ?? 0).toLocaleString() }}</b> 筆</span>
+              <button v-if="ch?.date" type="button" class="btn small" :disabled="mailBusy" @click="previewMail">{{ mailBusy ? '讀取中…' : mail ? '收起信件預覽' : '預覽摘要信' }}</button>
+              <button v-if="isAdmin" type="button" class="btn small" :disabled="snapping" @click="snapNow">{{ snapping ? '寫入中…' : '立即寫一份快照' }}</button>
+            </div>
+          </details>
+        </div>
+        <p v-if="ch?.tick_error" class="err">{{ ch.tick_error }}</p>
+        <p v-if="nc?.error" class="err">從沒收集過的清單讀不到，這個數字暫時不能用：{{ nc.error }}</p>
+        <div v-if="mail" class="mail"><b>{{ mail.subject }}</b><pre>{{ mail.body }}</pre></div>
+        <V2Table v-if="!cat" :rows="catRows" prefix="C" :cols="[{ k: 'label', label: '分類' }, { k: 'n', label: '筆數', mono: true, text: (r: any) => r.n_text, link: (r: any) => r.n ? `/v2/changes?tab=daily&cat=${r.key}${ch?.date ? '&date=' + ch.date : ''}` : null }]">
+          <template #cell-label="{ row }">{{ row.label }}<span v-if="row.key === NEVER" class="sub">目前狀態，不算當天異動</span></template>
+        </V2Table>
+        <template v-else-if="cat === NEVER">
+          <div class="bar"><button type="button" class="lb" @click="router.replace({ query: { ...route.query, cat: undefined } })">‹ 全部分類</button><b>{{ catLabel }}</b><span class="muted">{{ neverRows.length }} 台</span></div>
+          <p v-if="neverErr" class="err">{{ neverErr }}</p>
+          <V2Table v-if="neverLoaded" :rows="neverRows" prefix="N" empty="沒有從沒收集過的主機" export-name="從沒收集過"
+                   :cols="[{ k: 'name', label: '主機名稱', link: (r: any) => `/v2/machine/${encodeURIComponent(r.key)}` }, { k: 'ip', label: 'IP', mono: true }, { k: 'family', label: '作業系統' }, { k: 'state_label', label: '狀態' }, { k: 'reason', label: '原因' }]" />
+        </template>
+        <template v-else>
+          <div class="bar"><button type="button" class="lb" @click="router.replace({ query: { ...route.query, cat: undefined } })">‹ 全部分類</button><b>{{ catLabel }}</b><span class="muted">{{ itemRows.length }} 筆</span></div>
+          <V2Table :rows="itemRows" prefix="D" empty="此分類沒有異動"
+                   :cols="[{ k: 'name', label: '主機名稱', link: (r: any) => `/v2/machine/${encodeURIComponent(r.key)}` }, { k: 'ip_text', label: 'IP', mono: true }, { k: 'before_text', label: '異動前' }, { k: 'after_text', label: '異動後' }, { k: 'detail', label: '說明' }]" />
+        </template>
+      </template>
+      <template v-else-if="tab === 'week'">
+        <p v-if="weekErr" class="err">{{ weekErr }}</p>
+        <p v-if="week?.freshness?.reason" class="stale">{{ week.freshness.reason }}</p>
+        <V2Table v-if="week" :rows="weekRows" prefix="W" empty="無資料"
+                 :cols="[{ k: 'date', label: '日期', mono: true, link: (r: any) => r.link }, { k: 'n', label: '異動筆數', mono: true, text: (r: any) => r.n_text, link: (r: any) => r.link }, { k: 'status', label: '比對', text: (r: any) => r.status_text, tone: (r: any) => (r.status_tag ? 'test' : '') }, { k: 'detail', label: '分類', text: (r: any) => r.detail_text }]"
+                 :export-cols="[{ k: 'status', label: '比對說明' }]" />
+        <p v-else-if="!weekErr" class="muted">載入中…</p>
+        <InfoNote>最近 7 天每天的異動筆數，跟「每日異動」是同一份比對（點日期看明細）。「沒有快照」＝那天沒有留存；「資料沒更新」＝兩天之間掃描、收集、匯入都沒有新資料又比出 0 筆，不當成沒有異動；「沒有前一天可比」＝只有那一天的資料。匯出檔有完整說明。</InfoNote>
+      </template>
+      <template v-else>
+        <p v-if="issueErr" class="err">{{ issueErr }}</p>
+        <div class="bar">
+          <button type="button" class="chip" :class="{ on: issueFilter === 'open' }" @click="issueFilter = 'open'">未處理 {{ issueUnknown ? '—' : openCount }}</button>
+          <button type="button" class="chip" :class="{ on: issueFilter === 'all' }" @click="issueFilter = 'all'">全部 {{ issueUnknown ? '—' : issues.length }}</button>
+          <button type="button" class="chip" :class="{ on: issueFilter === 'auto' }" @click="issueFilter = 'auto'">系統自動關閉 {{ issueUnknown ? '—' : autoClosedCount }}</button>
+          <span class="sep" />
+          <button v-for="t in ['', ...typeList]" :key="t" type="button" class="chip" :class="{ on: issueType === t }" :title="TYPE_HINT[t] || ''" @click="pickType(t)">{{ t || '全部類型' }} {{ issueUnknown ? '—' : typeCount(t) }}</button>
+          <button v-if="!isViewer" type="button" class="btn" :disabled="!pickedIds.length" @click="markRead">標記已處理 {{ pickedIds.length }} 筆</button>
+          <InfoNote v-if="issueType && TYPE_HINT[issueType]">{{ TYPE_HINT[issueType] }}</InfoNote>
+        </div>
+        <p v-if="qNotice.kind === 'unknown'" class="err" data-testid="q-unknown">{{ qNotice.text }}<button type="button" class="lb" @click="loadQuality">重試</button><InfoNote>{{ qState.error }}</InfoNote></p>
+        <p v-else-if="qNotice.kind === 'pending'" class="err" data-testid="q-pending">{{ qNotice.text }}<button type="button" class="lb" @click="loadQuality">重試</button><InfoNote>{{ qState.data?.reason }}</InfoNote></p>
+        <p v-else-if="qNotice.kind === 'all' || qNotice.kind === 'segments'" class="err" data-testid="q-incomplete">{{ qNotice.text }}<InfoNote>{{ qState.data?.reason }}。未採用的網段：{{ qNotice.segments.join('、') || '（整批）' }}。未採用的那次不算「沒掃到」的一次，等完整掃描再判。</InfoNote></p>
+        <p v-for="e in qState.data?.baseline_events ?? []" :key="e" class="err" data-testid="q-baseline">{{ e }}（系統自己接受了縮小，請確認是真的下線而不是掃描範圍變了）</p>
+        <p v-for="e in qState.data?.invalid_settings ?? []" :key="e" class="err">{{ e }}</p>
+        <details v-if="isAdmin && preview.count" class="more" data-testid="preview-box">
+          <summary>系統預計自動關閉 {{ preview.count }} 筆（尚未套用）</summary>
+          <ul><li v-for="p in preview.items" :key="p.id">{{ p.hostname || p.ip }}（{{ p.ip }}）：{{ p.reason }}</li></ul>
+          <button type="button" class="btn" :disabled="applying" @click="applyPreview">套用（關閉 {{ preview.count }} 筆）</button>
+        </details>
+        <p v-if="issueType && issueLoaded && !typeList.includes(issueType)" class="err">找不到「{{ issueType }}」這類異常，下表是空的不代表沒有異常，請改選「全部類型」。</p>
+        <V2Table v-model:selected="picked" :rows="issueRows" prefix="E" empty="沒有掃描異常" selectable row-key="id" :can-select="(r: any) => !r.is_read" :cols="[{ k: 'detected_at', label: '偵測時間', mono: true }, { k: 'name', label: '主機名稱', link: (r: any) => (r.scan ? null : `/v2/machine/${encodeURIComponent(r.ip || r.hostname || '')}`), tone: (r: any) => (r.scan ? 'none' : '') }, { k: 'ip', label: 'IP', mono: true }, { k: 'issue_type', label: '類型' }, { k: 'note', label: '說明', link: (r: any) => (r.scan ? '/v2/onboard?tab=gaps' : null) }, { k: 'state', label: '處理狀態' }, ...(isViewer ? [] : [{ k: 'act', label: '操作', text: (r: any) => (r.is_read ? '' : '標已處理') }])]">
+          <template #cell-act="{ row }"><button v-if="!isViewer && !row.is_read" type="button" class="lb" @click="markOne(row)">標已處理</button><button v-if="isAdmin && row.auto_closed" type="button" class="lb" @click="restoreOne(row)">還原</button></template>
+        </V2Table>
+      </template>
+    </template>
+  </V2Page>
+</template>
+
+<style scoped>
+.h1 { margin: 0; font-size: 22px; font-weight: 700; }
+.aside { margin-left: 16px; font-size: 13px; color: var(--ink-aux); }
+.bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; font-size: 13px; }
+select { font-family: inherit; font-size: 13px; padding: 3px 6px; border: 1px solid var(--border-strong); border-radius: 6px; }
+.lb { background: none; border: 0; color: var(--link); cursor: pointer; font: inherit; padding: 0; }
+.chip { font-family: inherit; font-size: 12px; padding: 3px 10px; border-radius: 16px; border: 1px solid var(--border-strong); background: var(--card); color: var(--ink-aux); cursor: pointer; }
+.chip.on { border-color: var(--brand); color: var(--brand-dark); background: var(--mint); }
+.btn { font-family: inherit; font-size: 13px; padding: 4px 12px; border-radius: 8px; border: 1px solid var(--brand); background: var(--brand); color: var(--type-on); cursor: pointer; }
+.btn:disabled { opacity: .5; cursor: default; }
+.muted { color: var(--muted); }
+.sep { width: 1px; height: 18px; background: var(--border); }
+.mono { font-family: var(--disp); }
+.err { color: var(--bad); }
+.mail { border: 1px solid var(--border); border-radius: 8px; background: var(--sub); padding: 8px 12px; margin-bottom: 8px; font-size: 13px; }
+.mail pre { margin: 6px 0 0; white-space: pre-wrap; font-family: inherit; }
+a.btn { text-decoration: none; }
+.stale { padding: 2px 10px; border-radius: 999px; background: var(--warn-soft); color: var(--warn-text); }
+.sub { display: block; font-size: 12px; color: var(--muted); }
+.more { font-size: 13px; color: var(--ink-soft); }
+.more summary { cursor: pointer; color: var(--link); }
+.more .bar { margin: 6px 0 0; }
+.todo { display: flex; flex-direction: column; gap: 4px; padding: 10px 14px; background: var(--card); border: 1px solid var(--border); border-left: 5px solid var(--warn); border-radius: var(--radius); font-size: 13.5px; }
+.todo.ok { border-left-color: var(--good); }
+.todo .it { display: flex; gap: 10px; align-items: center; padding: 4px 0; border-top: 1px solid var(--line); }
+.todo .n { font-weight: 700; white-space: nowrap; }
+.todo .sp { flex: 1; }
+</style>
